@@ -196,7 +196,6 @@ async function refreshMe() {
   const { user } = await api('/api/me');
   state.me = user;
   const authed = Boolean(user);
-  $('#main-nav').classList.toggle('hidden', !authed);
   $('#wallet').classList.toggle('hidden', !authed);
   $('#user-chip').classList.toggle('hidden', !authed);
   $('#login-btn').classList.toggle('hidden', authed || !state.config.discord);
@@ -207,10 +206,6 @@ async function refreshMe() {
     $('#user-name').textContent = user.name;
     $('#user-avatar').src = user.avatar;
     $('#daily-btn').classList.toggle('hidden', !user.dailyReady);
-    $('#nav-mod').classList.toggle('hidden', !user.isAdmin);
-    const mb = $('#mod-badge');
-    mb.textContent = user.modPending;
-    mb.classList.toggle('hidden', !user.modPending);
   }
   return authed;
 }
@@ -586,10 +581,6 @@ async function loadTrades() {
   const { trades, users } = await api('/api/trades');
   state.trades = trades;
   state.tradeUsers = users;
-  const pendingIn = trades.filter((t) => t.status === 'pending' && t.toId === state.me.id).length;
-  const badge = $('#trade-badge');
-  badge.textContent = pendingIn;
-  badge.classList.toggle('hidden', pendingIn === 0);
 }
 
 async function renderTrades() {
@@ -1138,10 +1129,67 @@ async function renderQueue() {
 }
 
 // ─── Hero preview cards ──────────────────────────────────────────────────────
+// Cards get a cursor-tracked holographic tilt. The key fix over a plain CSS
+// :hover effect: transform + shine position are driven from JS so pointerleave
+// can explicitly animate both back to their resting state — no stuck tilt,
+// no shine frozen mid-sweep.
+function attachHoloTilt(el) {
+  const cs = getComputedStyle(el);
+  const rot = (cs.getPropertyValue('--base-rot') || '0deg').trim();
+  const ty = (cs.getPropertyValue('--base-y') || '0px').trim();
+  const base = `rotate(${rot}) translateY(${ty})`;
+  el.dataset.baseTransform = base;
+
+  const reset = () => {
+    // force a reflow so the browser commits the transition change before the
+    // transform change lands in the same tick — otherwise it can jump straight
+    // to the resting position instead of easing into it.
+    void el.offsetWidth;
+    el.style.transition = 'transform .6s cubic-bezier(.16,1,.3,1), --holo-o .6s ease-out';
+    el.style.transform = base;
+    el.style.setProperty('--holo-o', '0');
+  };
+  el.addEventListener('pointermove', (e) => {
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width;
+    const py = (e.clientY - r.top) / r.height;
+    const tiltX = (py - .5) * -16;
+    const tiltY = (px - .5) * 16;
+    el.style.transition = 'transform .06s linear';
+    el.style.transform = `${base} rotateX(${tiltX}deg) rotateY(${tiltY}deg) scale(1.06)`;
+    el.style.setProperty('--holo-x', `${px * 100}%`);
+    el.style.setProperty('--holo-y', `${py * 100}%`);
+    el.style.setProperty('--holo-o', '1');
+  });
+  el.addEventListener('pointerleave', reset);
+  el.addEventListener('pointercancel', reset);
+  reset();
+}
+
 function renderHeroCards() {
   const showcase = ['gymbag', 'buh', 'evil-takeover', 'tutel'];
   const byId = cardById();
-  $('#hero-cards').replaceChildren(...showcase.map((id) => cardEl(byId[id], { onClick: () => zoomCard(byId[id]) })));
+  const els = showcase.map((id) => cardEl(byId[id], { onClick: () => zoomCard(byId[id]) }));
+  $('#hero-cards').replaceChildren(...els);
+  els.forEach(attachHoloTilt);
+}
+
+// ─── Hero chat ticker (ambient flavor, not real data) ───────────────────────
+function renderChatTicker() {
+  const lines = [
+    ['sw4rm_unit', 'opened a legendary?? shut UP'],
+    ['crumbboi', 'trade check, need a gymbag pls'],
+    ['anon4021', 'buh core is undefeated fr'],
+    ['neuro_enjoyer', 'dad would be so proud of this pull'],
+    ['filian_fan', 'recycling my 40th common again lol'],
+    ['vedal_stan', 'i just want ONE (1) buh card'],
+    ['chatbot9000', 'is the evil theme lore accurate'],
+    ['swarm_bot', 'new pack drop in 3... 2...'],
+    ['tutel_truther', 'binder 61% complete, let him cook'],
+    ['gymbag_god', 'holo pulled, screenshot it, never delete'],
+  ];
+  const rows = lines.map(([who, msg]) => `<div><span class="who">${esc(who)}:</span> ${esc(msg)}</div>`).join('');
+  $('#chat-ticker').innerHTML = `<div class="ticker-track">${rows}${rows}</div>`;
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
@@ -1151,6 +1199,7 @@ function renderHeroCards() {
   Object.assign(state, { cards: catalog.cards, rarities: catalog.rarities, series: catalog.series });
 
   renderHeroCards();
+  renderChatTicker();
   renderOdds();
 
   if (new URLSearchParams(location.search).get('login') === 'failed') {
@@ -1161,8 +1210,12 @@ function renderHeroCards() {
   const authed = await refreshMe();
   if (authed) {
     loadTrades();
+<<<<<<< Updated upstream
     loadBattles();
     setInterval(() => { loadTrades(); loadBattles(); }, 30000); // keep the badges fresh
+=======
+    setInterval(loadTrades, 30000); // keep trade state fresh in the background
+>>>>>>> Stashed changes
     const deep = location.hash.slice(1);
     nav(['binder', 'packs', 'swarm', 'arena', 'market', 'ranks', 'trades', 'submit', 'modqueue'].includes(deep) ? deep : 'binder');
   } else {
