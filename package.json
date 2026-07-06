@@ -1,0 +1,11 @@
+{
+  "name": "swarm-stash",
+  "version": "1.0.0",
+  "description": "Swarm Stash — trade Neuro-sama & Evil Neuro meme cards with the swarm",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

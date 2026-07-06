@@ -1,0 +1,14 @@
+# secrets — Discord OAuth credentials & session secret live here
+.env
+
+# runtime state: SQLite database + uploaded meme images
+data/
+
+# nix build output
+result
+result-*
+
+# misc
+node_modules/
+nohup.out
+*.log
