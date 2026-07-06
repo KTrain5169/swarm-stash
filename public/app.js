@@ -106,22 +106,34 @@ function cardSVG(card) {
 
 const RETIRED_CARD = { id: 'retired', name: 'Retired Card', series: 'neuro', rarity: 'common', emoji: '❓', flavor: 'This meme was lost to the archives. F in chat.' };
 
-function cardEl(card, { qty, onClick } = {}) {
+function cardEl(card, { qty, onClick, foil } = {}) {
   card = card || RETIRED_CARD;
   const el = document.createElement('div');
-  el.className = `tcg-card r-${card.rarity}`;
+  el.className = `tcg-card r-${card.rarity}` + (foil ? ' foil' : '');
   el.style.setProperty('--rc', RARITY_COLOR[card.rarity]);
   el.innerHTML = cardSVG(card) + '<div class="card-selected-tick">✓</div>';
+  if (foil) el.insertAdjacentHTML('beforeend', '<div class="foil-badge">✦ FOIL</div>');
   if (qty > 1) el.insertAdjacentHTML('beforeend', `<div class="card-qty">×${qty}</div>`);
-  el.addEventListener('click', onClick || (() => zoomCard(card)));
+  el.addEventListener('click', onClick || (() => zoomCard(card, foil)));
   return el;
 }
 
-function zoomCard(card) {
+function zoomCard(card, foil) {
   const overlay = $('#zoom-overlay');
   overlay.classList.remove('closing');
-  $('#zoom-holder').replaceChildren(cardEl(card, { onClick: closeZoom }));
+  $('#zoom-holder').replaceChildren(cardEl(card, { onClick: closeZoom, foil }));
   overlay.classList.remove('hidden');
+}
+
+// Shared handling for endpoints that may pay out achievements
+function handleUnlocks(r) {
+  if (r.neurons != null && state.me) {
+    state.me.neurons = r.neurons;
+    $('#neuron-count').textContent = r.neurons;
+  }
+  for (const a of r.unlocked || []) {
+    toast(`${a.emoji} Achievement unlocked: ${a.name}${a.reward ? ` · +⚡${a.reward}` : ''}`);
+  }
 }
 function closeZoom() {
   const overlay = $('#zoom-overlay');
@@ -143,12 +155,13 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(
 // ─── Navigation ──────────────────────────────────────────────────────────────
 function nav(view) {
   state.view = view;
-  if (['binder', 'packs', 'swarm', 'trades', 'submit', 'modqueue'].includes(view)) history.replaceState(null, '', '#' + view);
+  if (['binder', 'packs', 'swarm', 'ranks', 'trades', 'submit', 'modqueue'].includes(view)) history.replaceState(null, '', '#' + view);
   $$('.view').forEach((v) => v.classList.add('hidden'));
   $(`#view-${view}`)?.classList.remove('hidden');
   $$('#main-nav button').forEach((b) => b.classList.toggle('active', b.dataset.nav === view));
   if (view === 'binder') renderBinder();
   if (view === 'swarm') renderSwarm();
+  if (view === 'ranks') renderRanks();
   if (view === 'trades') renderTrades();
   if (view === 'submit') renderMySubmissions();
   if (view === 'modqueue') renderQueue();
@@ -202,11 +215,10 @@ $('#dev-login').addEventListener('submit', async (e) => {
 
 $('#daily-btn').addEventListener('click', async () => {
   try {
-    const { neurons, gained } = await api('/api/daily', { method: 'POST' });
-    state.me.neurons = neurons;
-    $('#neuron-count').textContent = neurons;
+    const r = await api('/api/daily', { method: 'POST' });
     $('#daily-btn').classList.add('hidden');
-    toast(`⚡ +${gained} daily neurons claimed!`);
+    toast(`⚡ +${r.gained} daily neurons claimed!`);
+    handleUnlocks(r);
   } catch (err) { toast(err.message, true); }
 });
 
@@ -261,29 +273,42 @@ async function loadCollection() {
   state.collection = cards;
 }
 
+// Groups instances by card, foils separately from normal copies.
 function groupCollection(cards) {
   const map = new Map();
   for (const inst of cards) {
-    if (!map.has(inst.cardId)) map.set(inst.cardId, []);
-    map.get(inst.cardId).push(inst);
+    const key = inst.cardId + (inst.foil ? '|foil' : '');
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(inst);
   }
   return map;
 }
+const groupCard = (key) => key.split('|')[0];
+const groupFoil = (key) => key.endsWith('|foil');
 
 async function renderBinder() {
   await loadCollection();
   const byId = cardById();
   const groups = groupCollection(state.collection);
-  const unique = groups.size;
+  const ownedIds = new Set(state.collection.map((c) => c.cardId));
+  const foilCount = state.collection.filter((c) => c.foil).length;
   $('#binder-stats').innerHTML = `
     <span class="stat-chip"><b>${state.collection.length}</b> cards</span>
-    <span class="stat-chip"><b>${unique}</b>/<b>${state.cards.length}</b> unique</span>
-    <span class="stat-chip">set ${Math.round(unique / state.cards.length * 100)}% complete</span>`;
+    <span class="stat-chip"><b>${ownedIds.size}</b>/<b>${state.cards.length}</b> unique</span>
+    <span class="stat-chip"><b>${foilCount}</b> ✦ foil${foilCount === 1 ? '' : 's'}</span>
+    <span class="stat-chip">set ${Math.round(ownedIds.size / state.cards.length * 100)}% complete</span>`;
 
   const filters = ['all', ...Object.keys(state.series), 'legendary'];
   $('#binder-filters').replaceChildren(...filters.map((f) => {
     const b = document.createElement('button');
-    b.textContent = f === 'all' ? 'All' : f === 'legendary' ? '★ Legendary' : state.series[f].label;
+    if (f === 'all') b.textContent = 'All';
+    else if (f === 'legendary') b.textContent = '★ Legendary';
+    else {
+      const inSeries = state.cards.filter((c) => c.series === f);
+      const owned = inSeries.filter((c) => ownedIds.has(c.id)).length;
+      b.textContent = `${state.series[f].label} ${owned}/${inSeries.length}`;
+      if (inSeries.length && owned === inSeries.length) b.classList.add('complete');
+    }
     b.classList.toggle('active', binderFilter === f);
     b.onclick = () => { binderFilter = f; renderBinder(); };
     return b;
@@ -293,31 +318,35 @@ async function renderBinder() {
   grid.replaceChildren();
   const order = { legendary: 0, epic: 1, rare: 2, uncommon: 3, common: 4 };
   const entries = [...groups.entries()]
-    .filter(([id]) => {
-      const c = byId[id];
+    .filter(([key]) => {
+      const c = byId[groupCard(key)];
       return binderFilter === 'all' || c.series === binderFilter || c.rarity === binderFilter;
     })
-    .sort((a, b) => order[byId[a[0]].rarity] - order[byId[b[0]].rarity] || byId[a[0]].name.localeCompare(byId[b[0]].name));
+    .sort((a, b) => {
+      const ca = byId[groupCard(a[0])], cb = byId[groupCard(b[0])];
+      return order[ca.rarity] - order[cb.rarity] || ca.name.localeCompare(cb.name) || groupFoil(b[0]) - groupFoil(a[0]);
+    });
 
-  entries.forEach(([id, insts], i) => {
-    const card = byId[id];
+  entries.forEach(([key, insts], i) => {
+    const card = byId[groupCard(key)];
+    const foil = groupFoil(key);
     const cell = document.createElement('div');
     cell.className = 'card-cell';
     cell.style.setProperty('--i', i);
-    cell.appendChild(cardEl(card, { qty: insts.length }));
-    const value = state.rarities[card.rarity].value;
+    cell.appendChild(cardEl(card, { qty: insts.length, foil }));
+    const value = state.rarities[card.rarity].value * (foil ? state.config.foilMult : 1);
     const actions = document.createElement('div');
     actions.className = 'card-actions';
     const sell = document.createElement('button');
     sell.textContent = `recycle · ⚡${value}`;
     sell.title = insts.length > 1 ? 'Recycle one copy for neurons' : 'Recycle this card for neurons';
     sell.onclick = async () => {
-      if (insts.length === 1 && !confirm(`Recycle your only "${card.name}" for ⚡${value}?`)) return;
+      const label = foil ? `foil "${card.name}"` : `"${card.name}"`;
+      if (insts.length === 1 && !confirm(`Recycle your only ${label} for ⚡${value}?`)) return;
       try {
-        const { neurons, gained } = await api(`/api/cards/${insts[0].instanceId}/sell`, { method: 'POST' });
-        state.me.neurons = neurons;
-        $('#neuron-count').textContent = neurons;
-        toast(`♻️ recycled ${card.name} for ⚡${gained}`);
+        const r = await api(`/api/cards/${insts[0].instanceId}/sell`, { method: 'POST' });
+        toast(`♻️ recycled ${card.name} for ⚡${r.gained}`);
+        handleUnlocks(r);
         renderBinder();
       } catch (err) { toast(err.message, true); }
     };
@@ -344,10 +373,9 @@ $('#open-pack-btn').addEventListener('click', async () => {
   const btn = $('#open-pack-btn');
   btn.disabled = true;
   try {
-    const { neurons, cards } = await api('/api/packs/open', { method: 'POST' });
-    state.me.neurons = neurons;
-    $('#neuron-count').textContent = neurons;
-    runPackOpening(cards);
+    const r = await api('/api/packs/open', { method: 'POST' });
+    handleUnlocks(r);
+    runPackOpening(r.cards);
   } catch (err) { toast(err.message, true); }
   btn.disabled = false;
 });
@@ -376,7 +404,7 @@ function runPackOpening(pulls) {
       pulls.forEach((inst, i) => {
         const card = byId[inst.cardId];
         const flip = document.createElement('div');
-        flip.className = `flip-card r-${card.rarity}`;
+        flip.className = `flip-card r-${card.rarity}` + (inst.foil ? ' foil-pull' : '');
         flip.style.animationDelay = `${i * 120}ms`;
         flip.innerHTML = `
           <div class="flip-inner">
@@ -384,10 +412,11 @@ function runPackOpening(pulls) {
             <div class="flip-face flip-front-face"></div>
           </div>`;
         const front = $('.flip-front-face', flip);
-        front.appendChild(cardEl(card, { onClick: () => {} }));
+        front.appendChild(cardEl(card, { onClick: () => {}, foil: inst.foil }));
         flip.addEventListener('click', () => {
           if (flip.classList.contains('flipped')) return;
           flip.classList.add('flipped');
+          if (inst.foil) toast(`✦ FOIL ${card.name}! shiny shiny shiny`);
           if (card.rarity === 'legendary') toast(`🌟 LEGENDARY PULL: ${card.name}!!`);
           if (++revealed === pulls.length) {
             hint.textContent = '';
@@ -434,11 +463,11 @@ async function openMember(userId) {
   const byId = cardById();
   const grid = $('#member-grid');
   grid.replaceChildren();
-  [...groupCollection(cards).entries()].forEach(([id, insts], i) => {
+  [...groupCollection(cards).entries()].forEach(([key, insts], i) => {
     const cell = document.createElement('div');
     cell.className = 'card-cell';
     cell.style.setProperty('--i', i);
-    cell.appendChild(cardEl(byId[id], { qty: insts.length }));
+    cell.appendChild(cardEl(byId[groupCard(key)], { qty: insts.length, foil: groupFoil(key) }));
     grid.appendChild(cell);
   });
   nav('member');
@@ -462,7 +491,7 @@ function fillPickGrid(side, insts) {
   const grid = $(`#${side}-grid`);
   grid.replaceChildren(...insts.map((inst) => {
     const card = byId[inst.cardId];
-    const el = cardEl(card, { onClick: () => {
+    const el = cardEl(card, { foil: inst.foil, onClick: () => {
       if (picks[side].has(inst.instanceId)) picks[side].delete(inst.instanceId);
       else if (picks[side].size < 6) picks[side].add(inst.instanceId);
       else return toast('max 6 cards per side', true);
@@ -479,15 +508,16 @@ $('#trade-close').addEventListener('click', () => $('#trade-modal').classList.ad
 $('#trade-send').addEventListener('click', async () => {
   if (!picks.give.size || !picks.get.size) return toast('pick at least one card on each side', true);
   try {
-    const { trade } = await api('/api/trades', { method: 'POST', body: {
+    const r = await api('/api/trades', { method: 'POST', body: {
       toId: state.member.user.id,
       offer: [...picks.give], request: [...picks.get],
       message: $('#trade-message').value,
     }});
     $('#trade-modal').classList.add('hidden');
-    if (trade.status === 'accepted') toast(`🤝 ${state.member.user.name} accepted instantly!`);
-    else if (trade.status === 'declined') toast(`😤 ${state.member.user.name} declined — offer more value`, true);
+    if (r.trade.status === 'accepted') toast(`🤝 ${state.member.user.name} accepted instantly!`);
+    else if (r.trade.status === 'declined') toast(`😤 ${state.member.user.name} declined — offer more value`, true);
     else toast('📨 trade offer sent!');
+    handleUnlocks(r);
     nav('trades');
   } catch (err) { toast(err.message, true); }
 });
@@ -536,7 +566,7 @@ async function renderTrades() {
           holder.appendChild(ghost);
           continue;
         }
-        holder.appendChild(cardEl(byId[inst.cardId]));
+        holder.appendChild(cardEl(byId[inst.cardId], { foil: inst.foil }));
       }
     }
     const actions = $('.trade-actions', row);
@@ -565,10 +595,43 @@ function tradeBtn(label, cls, fn) {
 
 async function actTrade(id, action) {
   try {
-    await api(`/api/trades/${id}/${action}`, { method: 'POST' });
+    const r = await api(`/api/trades/${id}/${action}`, { method: 'POST' });
     toast(action === 'accept' ? '🤝 trade complete! cards swapped.' : `trade ${action}ed`);
+    handleUnlocks(r);
     renderTrades();
   } catch (err) { toast(err.message, true); renderTrades(); }
+}
+
+// ─── Ranks: leaderboard + achievements ──────────────────────────────────────
+async function renderRanks() {
+  const [{ board }, { defs, unlocked }] = await Promise.all([api('/api/leaderboard'), api('/api/achievements')]);
+  const medals = ['🥇', '🥈', '🥉'];
+  const list = $('#lb-list');
+  list.replaceChildren(...board.map((u, i) => {
+    const row = document.createElement('div');
+    row.className = 'lb-row' + (u.id === state.me.id ? ' me' : '');
+    row.style.setProperty('--i', i);
+    row.innerHTML = `
+      <span class="lb-rank">${medals[i] || '#' + (i + 1)}</span>
+      <img src="${u.avatar}" alt="">
+      <span class="lb-name">${esc(u.name)}${u.id === state.me.id ? ' <span class="bot-tag">YOU</span>' : ''}</span>
+      <span class="lb-stats">${u.unique} unique · ${u.foils} ✦ · ${u.achievements} 🏆</span>
+      <span class="lb-score">⚡${u.score}</span>`;
+    return row;
+  }));
+  $('#lb-empty').classList.toggle('hidden', board.length > 0);
+
+  $('#ach-count').textContent = `${Object.keys(unlocked).length}/${defs.length}`;
+  $('#ach-grid').replaceChildren(...defs.map((a) => {
+    const el = document.createElement('div');
+    el.className = 'ach' + (unlocked[a.id] ? ' unlocked' : '');
+    el.title = unlocked[a.id] ? `Unlocked ${new Date(unlocked[a.id]).toLocaleDateString()}` : 'Locked';
+    el.innerHTML = `
+      <span class="ach-emoji">${a.emoji}</span>
+      <div class="ach-info"><b>${esc(a.name)}</b><span class="ach-desc">${esc(a.desc)}</span></div>
+      ${a.reward ? `<span class="ach-reward">+⚡${a.reward}</span>` : ''}`;
+    return el;
+  }));
 }
 
 // ─── Meme submission portal ──────────────────────────────────────────────────
@@ -615,6 +678,7 @@ $('#submit-form').addEventListener('submit', async (e) => {
   try {
     const r = await api('/api/memes', { method: 'POST', body: { name, data: memeData } });
     toast(r.status === 'approved' ? `🎉 ${r.note}` : `📨 ${r.note}`);
+    handleUnlocks(r);
     memeData = null;
     $('#drop-preview').classList.add('hidden');
     $('#drop-inner').classList.remove('hidden');
@@ -706,7 +770,7 @@ function renderHeroCards() {
     loadTrades();
     setInterval(loadTrades, 30000); // keep the trade badge fresh
     const deep = location.hash.slice(1);
-    nav(['binder', 'packs', 'swarm', 'trades', 'submit', 'modqueue'].includes(deep) ? deep : 'binder');
+    nav(['binder', 'packs', 'swarm', 'ranks', 'trades', 'submit', 'modqueue'].includes(deep) ? deep : 'binder');
   } else {
     nav('home');
   }

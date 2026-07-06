@@ -5,7 +5,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { CARDS, RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEURONS, STARTING_NEURONS, STARTER_CARDS } = require('./catalog');
+const { CARDS, RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEURONS, STARTING_NEURONS, STARTER_CARDS, FOIL_CHANCE, FOIL_MULT } = require('./catalog');
+const { ACHIEVEMENTS } = require('./achievements');
 
 // ─── Config (.env) ───────────────────────────────────────────────────────────
 // Checked next to server.js and in the working directory — the latter matters
@@ -120,7 +121,50 @@ function openPackFor(user) {
     const pool = allCards().filter((c) => c.rarity !== 'common');
     cards[Math.floor(Math.random() * cards.length)] = pool[Math.floor(Math.random() * pool.length)];
   }
-  return cards.map((c) => store.grantCard(user.id, c.id));
+  return cards.map((c) => store.grantCard(user.id, c.id, Math.random() < FOIL_CHANCE));
+}
+
+const instValue = (inst) => RARITIES[getCard(inst.cardId).rarity].value * (inst.foil ? FOIL_MULT : 1);
+
+// ─── Achievements ────────────────────────────────────────────────────────────
+// Runs all locked checks for a user; unlocks + pays out rewards, returns the
+// newly unlocked definitions so endpoints can surface them as toasts.
+function checkAchievements(user) {
+  if (user.bot) return [];
+  const fresh = store.getUser(user.id);
+  const have = new Set(store.listAchievements(user.id).map((a) => a.achId));
+  const insts = store.listByOwner(user.id);
+  const isLegendary = (i) => getCard(i.cardId).rarity === 'legendary';
+  const ctx = {
+    stat: (k) => store.getStat(user.id, k),
+    ownedIds: new Set(insts.map((i) => i.cardId)),
+    hasFoil: insts.some((i) => i.foil),
+    hasLegendary: insts.some(isLegendary),
+    hasFoilLegendary: insts.some((i) => i.foil && isLegendary(i)),
+    neurons: fresh.neurons,
+    approvedMemes: store.approvedCountBy(user.id),
+  };
+  const unlocked = [];
+  let neurons = fresh.neurons;
+  for (const a of ACHIEVEMENTS) {
+    if (have.has(a.id) || !a.check(ctx)) continue;
+    store.unlockAchievement(user.id, a.id);
+    neurons += a.reward;
+    unlocked.push(a);
+  }
+  if (neurons !== fresh.neurons) store.setNeurons(user.id, neurons);
+  return unlocked;
+}
+const achOut = ({ id, name, emoji, desc, reward }) => ({ id, name, emoji, desc, reward });
+
+// Post-trade bookkeeping for both parties; returns userId → newly unlocked.
+function tradeExecuted(trade) {
+  const unlocked = {};
+  for (const id of [trade.fromId, trade.toId]) {
+    store.bumpStat(id, 'trades');
+    unlocked[id] = checkAchievements(store.getUser(id));
+  }
+  return unlocked;
 }
 
 function publicUser(u) {
@@ -131,7 +175,7 @@ function publicUser(u) {
     joinedAt: u.createdAt,
   };
 }
-const instOut = (i) => ({ instanceId: i.id, cardId: i.cardId, ownerId: i.ownerId, obtainedAt: i.obtainedAt });
+const instOut = (i) => ({ instanceId: i.id, cardId: i.cardId, ownerId: i.ownerId, obtainedAt: i.obtainedAt, foil: Boolean(i.foil) });
 
 function tradeOut(t) {
   const resolve = (id) => {
@@ -164,7 +208,7 @@ seedBots();
 function botConsiderTrade(trade) {
   const value = (ids) => ids.reduce((s, id) => {
     const inst = store.getInstance(id);
-    return s + (inst ? RARITIES[getCard(inst.cardId).rarity].value : 0);
+    return s + (inst ? instValue(inst) : 0);
   }, 0);
   if (value(trade.offer) >= value(trade.request)) store.executeTrade(trade);
   else store.resolveTrade(trade.id, 'declined');
@@ -294,7 +338,7 @@ async function handle(req, res) {
   }
 
   // ── public API ──
-  if (p === '/api/config') return sendJSON(res, 200, { discord: DISCORD_ENABLED, devLogin: DEV_LOGIN, packCost: PACK_COST, packSize: PACK_SIZE, daily: DAILY_NEURONS, moderation: MODERATION });
+  if (p === '/api/config') return sendJSON(res, 200, { discord: DISCORD_ENABLED, devLogin: DEV_LOGIN, packCost: PACK_COST, packSize: PACK_SIZE, daily: DAILY_NEURONS, moderation: MODERATION, foilChance: FOIL_CHANCE, foilMult: FOIL_MULT });
   if (p === '/api/catalog') return sendJSON(res, 200, { cards: allCards(), rarities: RARITIES, series: SERIES });
 
   // uploaded meme images
@@ -334,6 +378,22 @@ async function handle(req, res) {
     return sendJSON(res, 200, { users });
   }
 
+  if (p === '/api/leaderboard') {
+    // binder value (foils count ×FOIL_MULT) + 100 clout per achievement; bots don't rank
+    const board = store.listUsers().filter((u) => !u.bot).map((u) => {
+      const insts = store.listByOwner(u.id);
+      const value = insts.reduce((s, i) => s + instValue(i), 0);
+      const achievements = store.listAchievements(u.id).length;
+      return {
+        id: u.id, name: u.name, avatar: u.avatar,
+        cards: insts.length, unique: new Set(insts.map((i) => i.cardId)).size,
+        foils: insts.filter((i) => i.foil).length,
+        achievements, score: value + achievements * 100,
+      };
+    }).sort((a, b) => b.score - a.score);
+    return sendJSON(res, 200, { board });
+  }
+
   if (p === '/api/collection') {
     const targetId = url.searchParams.get('user') || (me && me.id);
     const target = targetId && store.getUser(targetId);
@@ -348,17 +408,23 @@ async function handle(req, res) {
 
   if (p === '/api/daily' && req.method === 'POST') {
     if (Date.now() - me.lastDaily < 20 * 3600e3) return err(res, 429, 'Daily neurons already claimed. Come back later!');
-    const neurons = me.neurons + DAILY_NEURONS;
-    store.claimDaily(me.id, neurons, Date.now());
-    return sendJSON(res, 200, { neurons, gained: DAILY_NEURONS });
+    store.claimDaily(me.id, me.neurons + DAILY_NEURONS, Date.now());
+    const unlocked = checkAchievements(me);
+    return sendJSON(res, 200, { neurons: store.getUser(me.id).neurons, gained: DAILY_NEURONS, unlocked: unlocked.map(achOut) });
+  }
+
+  if (p === '/api/achievements' && req.method === 'GET') {
+    const unlocked = Object.fromEntries(store.listAchievements(me.id).map((a) => [a.achId, a.unlockedAt]));
+    return sendJSON(res, 200, { defs: ACHIEVEMENTS.map(achOut), unlocked });
   }
 
   if (p === '/api/packs/open' && req.method === 'POST') {
     if (me.neurons < PACK_COST) return err(res, 400, `Not enough neurons — a pack costs ${PACK_COST}.`);
-    const neurons = me.neurons - PACK_COST;
-    store.setNeurons(me.id, neurons);
+    store.setNeurons(me.id, me.neurons - PACK_COST);
+    store.bumpStat(me.id, 'packs');
     const pulls = openPackFor(me);
-    return sendJSON(res, 200, { neurons, cards: pulls.map(instOut) });
+    const unlocked = checkAchievements(me);
+    return sendJSON(res, 200, { neurons: store.getUser(me.id).neurons, cards: pulls.map(instOut), unlocked: unlocked.map(achOut) });
   }
 
   const sellMatch = p.match(/^\/api\/cards\/([^/]+)\/sell$/);
@@ -366,11 +432,12 @@ async function handle(req, res) {
     const inst = store.getInstance(sellMatch[1]);
     if (!inst || inst.ownerId !== me.id) return err(res, 404, 'card not found in your binder');
     if (store.lockedInstanceIds().has(inst.id)) return err(res, 400, 'card is locked in a pending trade');
-    const value = RARITIES[getCard(inst.cardId).rarity].value;
+    const value = instValue(inst);
     store.deleteInstance(inst.id);
-    const neurons = me.neurons + value;
-    store.setNeurons(me.id, neurons);
-    return sendJSON(res, 200, { neurons, gained: value });
+    store.setNeurons(me.id, me.neurons + value);
+    store.bumpStat(me.id, 'recycled');
+    const unlocked = checkAchievements(me);
+    return sendJSON(res, 200, { neurons: store.getUser(me.id).neurons, gained: value, unlocked: unlocked.map(achOut) });
   }
 
   // ── meme submission portal ──
@@ -402,7 +469,9 @@ async function handle(req, res) {
     const status = MODERATION ? 'pending' : 'approved';
     store.createMeme({ id, name, file, rarity, submitterId: me.id, status });
     if (status === 'approved') for (let i = 0; i < APPROVAL_COPIES; i++) store.grantCard(me.id, id);
+    const unlocked = status === 'approved' ? checkAchievements(me) : [];
     return sendJSON(res, 200, { id, rarity, status,
+      neurons: store.getUser(me.id).neurons, unlocked: unlocked.map(achOut),
       note: status === 'approved'
         ? `Minted instantly as a ${rarity} card — ${APPROVAL_COPIES} copies are in your binder!`
         : 'Submitted for review. A moderator will take a look.' });
@@ -426,6 +495,7 @@ async function handle(req, res) {
     if (memeAction[2] === 'approve') {
       store.resolveMeme(meme.id, 'approved');
       for (let i = 0; i < APPROVAL_COPIES; i++) store.grantCard(meme.submitterId, meme.id);
+      checkAchievements(store.getUser(meme.submitterId)); // Meme Lord etc. pay out even without a toast
     } else {
       store.resolveMeme(meme.id, 'rejected');
       fs.unlink(path.join(UPLOAD_DIR, meme.file), () => {});
@@ -469,8 +539,12 @@ async function handle(req, res) {
       offer: [...new Set(offer)], request: [...new Set(request)],
       message: String(message).slice(0, 200),
     });
-    if (target.bot) trade = botConsiderTrade(trade);
-    return sendJSON(res, 200, { trade: tradeOut(trade) });
+    let unlocked = [];
+    if (target.bot) {
+      trade = botConsiderTrade(trade);
+      if (trade.status === 'accepted') unlocked = tradeExecuted(trade)[me.id];
+    }
+    return sendJSON(res, 200, { trade: tradeOut(trade), unlocked: unlocked.map(achOut), neurons: store.getUser(me.id).neurons });
   }
 
   const tradeAction = p.match(/^\/api\/trades\/([^/]+)\/(accept|decline|cancel)$/);
@@ -482,16 +556,18 @@ async function handle(req, res) {
     if (action === 'cancel' && t.fromId !== me.id) return err(res, 403, 'only the sender can cancel');
     if ((action === 'accept' || action === 'decline') && t.toId !== me.id) return err(res, 403, 'only the recipient can respond');
 
+    let unlocked = [];
     if (action === 'accept') {
       // re-validate ownership at accept time
       const owns = (cid, uid) => { const i = store.getInstance(cid); return i && i.ownerId === uid; };
       const ok = t.offer.every((cid) => owns(cid, t.fromId)) && t.request.every((cid) => owns(cid, t.toId));
       if (!ok) { store.resolveTrade(t.id, 'expired'); return err(res, 409, 'a card in this trade changed hands — trade expired'); }
       store.executeTrade(t);
+      unlocked = tradeExecuted(t)[me.id];
     } else {
       store.resolveTrade(t.id, action === 'decline' ? 'declined' : 'cancelled');
     }
-    return sendJSON(res, 200, { trade: tradeOut(store.getTrade(id)) });
+    return sendJSON(res, 200, { trade: tradeOut(store.getTrade(id)), unlocked: unlocked.map(achOut), neurons: store.getUser(me.id).neurons });
   }
 
   if (p.startsWith('/api/') || p.startsWith('/auth/')) return err(res, 404, 'no such endpoint');

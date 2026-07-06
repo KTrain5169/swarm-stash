@@ -23,6 +23,7 @@
     <button data-nav="binder">Binder</button>
     <button data-nav="packs">Packs</button>
     <button data-nav="swarm">Swarm</button>
+    <button data-nav="ranks">Ranks</button>
     <button data-nav="trades">Trades <span id="trade-badge" class="badge hidden"></span></button>
     <button data-nav="submit">Submit</button>
     <button data-nav="modqueue" id="nav-mod" class="hidden">Queue <span id="mod-badge" class="badge hidden"></span></button>
@@ -94,6 +95,7 @@
         <h3>Neuro Meme Pack</h3>
         <p>Four random meme cards from the full set. Every pack is guaranteed at least one
           <span class="r-uncommon">uncommon</span> or better. Legendaries are <b>1.5%</b> — good luck, swarm member.</p>
+        <p class="foil-note">✦ 1 in 20 cards comes out <span class="holo-text">FOIL</span> — extra shiny, worth 4× when recycled, and pure binder clout.</p>
         <ul class="odds" id="odds-list"></ul>
         <button id="open-pack-btn" class="btn-primary big">Open Pack · ⚡<span id="pack-cost">100</span></button>
         <p class="hint">Earn neurons with the daily <b>+150</b> claim (top right) or by recycling duplicate cards from your binder.</p>
@@ -115,6 +117,25 @@
       <button id="propose-btn" class="btn-primary">Propose Trade</button>
     </div>
     <div class="card-grid" id="member-grid"></div>
+  </section>
+
+  <!-- ═══ ranks: leaderboard + achievements ═══ -->
+  <section id="view-ranks" class="view hidden">
+    <div class="view-head">
+      <h2>Ranks</h2>
+      <p class="view-sub">Swarm clout = binder value (foils count 4×) + ⚡100 per achievement. Complete a series for a fat neuron payout.</p>
+    </div>
+    <div class="ranks-layout">
+      <div class="submit-panel">
+        <h4 class="panel-title">Leaderboard</h4>
+        <div id="lb-list"></div>
+        <p class="empty-note hidden" id="lb-empty">Nobody has ranked yet. Free podium!</p>
+      </div>
+      <div class="submit-panel">
+        <h4 class="panel-title">Achievements <span id="ach-count" class="pick-count"></span></h4>
+        <div id="ach-grid"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ═══ meme submission portal ═══ -->

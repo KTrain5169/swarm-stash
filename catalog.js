@@ -74,5 +74,7 @@ const PACK_SIZE = 4;
 const DAILY_NEURONS = 150;
 const STARTING_NEURONS = 350;
 const STARTER_CARDS = ['cookie-gremlin', 'softest-threat', 'alright'];
+const FOIL_CHANCE = 0.05; // per pulled card
+const FOIL_MULT = 4;      // recycle / trade value multiplier for foils
 
-module.exports = { CARDS, RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEURONS, STARTING_NEURONS, STARTER_CARDS };
+module.exports = { CARDS, RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEURONS, STARTING_NEURONS, STARTER_CARDS, FOIL_CHANCE, FOIL_MULT };

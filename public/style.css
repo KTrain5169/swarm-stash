@@ -290,6 +290,31 @@ a { color: var(--accent-2); }
 }
 @keyframes sheen { 0%, 60% { transform: translateX(-38%); } 100% { transform: translateX(38%); } }
 
+/* foil variant — rainbow film over the whole card */
+.tcg-card.foil::before {
+  content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  border-radius: 10px;
+  background: linear-gradient(115deg,
+    rgba(255, 92, 168, .28), rgba(127, 219, 255, .24) 28%,
+    rgba(255, 209, 102, .28) 52%, rgba(111, 227, 165, .22) 74%, rgba(255, 92, 168, .28));
+  background-size: 300% 300%;
+  mix-blend-mode: screen;
+  animation: foilShift 4.5s linear infinite;
+}
+@keyframes foilShift { to { background-position: 300% 150%; } }
+.tcg-card.foil { box-shadow: 0 6px 18px rgba(0, 0, 0, .45), 0 0 14px color-mix(in oklab, var(--rc) 55%, transparent); }
+.foil-badge {
+  position: absolute; top: 7px; left: 7px; z-index: 3;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 1px;
+  color: #1b1230; text-shadow: none;
+  background: linear-gradient(100deg, var(--pink), var(--cyan), var(--cream), var(--pink));
+  background-size: 300% 100%;
+  animation: holoShift 3s linear infinite;
+  border-radius: 7px; padding: 2px 6px;
+}
+.flip-card.foil-pull.flipped { filter: drop-shadow(0 0 20px var(--cyan)) drop-shadow(0 0 10px var(--pink)); }
+.foil-note { margin-top: 12px; }
+
 .card-qty {
   position: absolute; top: 7px; right: 7px; z-index: 3;
   background: rgba(0, 0, 0, .68); color: #fff;
@@ -335,6 +360,8 @@ a { color: var(--accent-2); }
   border-radius: 999px; padding: 6px 14px; font-size: 13px; font-family: var(--font-body);
 }
 .filter-row button.active { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.filter-row button.complete:not(.active) { color: var(--cream); border-color: color-mix(in oklab, var(--cream) 50%, transparent); }
+.filter-row button.complete::after { content: ' ✓'; }
 
 .empty-note { color: var(--ink-dim); text-align: center; padding: 60px 0; font-size: 17px; }
 
@@ -498,6 +525,36 @@ a { color: var(--accent-2); }
   .trade-builder { grid-template-columns: 1fr; }
   .trade-arrows { transform: rotate(90deg); }
 }
+
+/* ── ranks: leaderboard + achievements ── */
+.ranks-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+@media (max-width: 820px) { .ranks-layout { grid-template-columns: 1fr; } }
+.lb-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 14px; margin-bottom: 8px;
+  animation: rise .4s ease-out both; animation-delay: calc(var(--i, 0) * 30ms);
+}
+.lb-row.me { border-color: var(--accent); box-shadow: var(--glow); }
+.lb-rank { font-family: var(--font-display); font-size: 17px; width: 36px; text-align: center; color: var(--ink-dim); flex-shrink: 0; }
+.lb-row img { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--accent-2); flex-shrink: 0; }
+.lb-name { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.lb-stats { font-family: var(--font-mono); font-size: 11px; color: var(--ink-dim); text-align: right; }
+.lb-score { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--cream); }
+
+.ach {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 14px; margin-bottom: 8px;
+  opacity: .42; filter: grayscale(.85);
+  transition: opacity .2s, filter .2s;
+}
+.ach.unlocked { opacity: 1; filter: none; border-color: color-mix(in oklab, var(--cream) 45%, var(--line)); }
+.ach-emoji { font-size: 24px; flex-shrink: 0; }
+.ach-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.ach-info b { font-size: 14px; }
+.ach-desc { font-size: 12px; color: var(--ink-dim); }
+.ach-reward { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--cream); }
 
 /* ── meme submission portal ── */
 .submit-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }

@@ -4,6 +4,9 @@ Trade **Neuro-sama** & **Evil Neuro** meme cards with the swarm — like Pokémo
 
 - 📦 Rip packs of 4 procedurally-drawn meme cards (⚡100 neurons each, at least one uncommon+ guaranteed)
 - ♥ Collect all 38 cards across 5 series: Neuro-sama, Evil Neuro, The Twins, Vedal, Collabs
+- ✦ **Foil variants**: 1 in 20 pulls comes out foil — animated rainbow sheen, 4× recycle/trade value
+- 🏆 **Achievements** with neuron payouts: pack milestones, trading, foil hunting, and a reward for completing each series
+- 👑 **Leaderboard** under the new Ranks tab: swarm clout = binder value (foils ×4) + ⚡100 per achievement (bots don't rank)
 - 🤝 Browse other members' binders and propose card-for-card trades (up to 6 per side)
 - 🖼️ **Meme submission portal**: players upload real memes (PNG/JPG/GIF/WEBP, max 5MB) which get minted as tradeable cards in the "Swarm Memes" series — credited to the submitter, who receives 2 copies
 - 😈 "Corrupt" the whole site into Evil Neuro mode with the theme toggle

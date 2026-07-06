@@ -58,7 +58,24 @@ db.exec(`
     resolvedAt  INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_memes_status ON memes(status);
+
+  CREATE TABLE IF NOT EXISTS achievements (
+    userId     TEXT NOT NULL REFERENCES users(id),
+    achId      TEXT NOT NULL,
+    unlockedAt INTEGER NOT NULL,
+    PRIMARY KEY (userId, achId)
+  );
+
+  CREATE TABLE IF NOT EXISTS stats (
+    userId TEXT NOT NULL REFERENCES users(id),
+    key    TEXT NOT NULL,
+    value  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (userId, key)
+  );
 `);
+
+// foil variants were added after launch — patch older databases in place
+try { db.exec(`ALTER TABLE inventory ADD COLUMN foil INTEGER NOT NULL DEFAULT 0`); } catch { /* column exists */ }
 
 const newId = (prefix) => `${prefix}_${crypto.randomBytes(6).toString('hex')}`;
 
@@ -76,7 +93,7 @@ const q = {
   setDaily: db.prepare(`UPDATE users SET neurons = ?, lastDaily = ? WHERE id = ?`),
   userCounts: db.prepare(`SELECT COUNT(*) AS cardCount, COUNT(DISTINCT cardId) AS uniqueCount FROM inventory WHERE ownerId = ?`),
 
-  insertInstance: db.prepare(`INSERT INTO inventory (id, cardId, ownerId, obtainedAt) VALUES (?, ?, ?, ?)`),
+  insertInstance: db.prepare(`INSERT INTO inventory (id, cardId, ownerId, obtainedAt, foil) VALUES (?, ?, ?, ?, ?)`),
   getInstance: db.prepare(`SELECT * FROM inventory WHERE id = ?`),
   listByOwner: db.prepare(`SELECT * FROM inventory WHERE ownerId = ? ORDER BY obtainedAt DESC`),
   setOwner: db.prepare(`UPDATE inventory SET ownerId = ? WHERE id = ?`),
@@ -99,6 +116,13 @@ const q = {
   resolveMeme: db.prepare(`UPDATE memes SET status = ?, resolvedAt = ? WHERE id = ?`),
   countPendingBy: db.prepare(`SELECT COUNT(*) AS n FROM memes WHERE submitterId = ? AND status = 'pending'`),
   countPending: db.prepare(`SELECT COUNT(*) AS n FROM memes WHERE status = 'pending'`),
+  countApprovedBy: db.prepare(`SELECT COUNT(*) AS n FROM memes WHERE submitterId = ? AND status = 'approved'`),
+
+  unlockAch: db.prepare(`INSERT OR IGNORE INTO achievements (userId, achId, unlockedAt) VALUES (?, ?, ?)`),
+  listAch: db.prepare(`SELECT achId, unlockedAt FROM achievements WHERE userId = ?`),
+  bumpStat: db.prepare(`INSERT INTO stats (userId, key, value) VALUES (?, ?, ?)
+                        ON CONFLICT(userId, key) DO UPDATE SET value = value + excluded.value`),
+  getStat: db.prepare(`SELECT value FROM stats WHERE userId = ? AND key = ?`),
 };
 
 const rowToTrade = (r) => r && { ...r, offer: JSON.parse(r.offer), request: JSON.parse(r.request) };
@@ -122,9 +146,9 @@ const store = {
   claimDaily: (id, neurons, when) => q.setDaily.run(neurons, when, id),
   userCounts: (id) => q.userCounts.get(id),
 
-  grantCard(ownerId, cardId) {
-    const inst = { id: newId('c'), cardId, ownerId, obtainedAt: Date.now() };
-    q.insertInstance.run(inst.id, inst.cardId, inst.ownerId, inst.obtainedAt);
+  grantCard(ownerId, cardId, foil = false) {
+    const inst = { id: newId('c'), cardId, ownerId, obtainedAt: Date.now(), foil: foil ? 1 : 0 };
+    q.insertInstance.run(inst.id, inst.cardId, inst.ownerId, inst.obtainedAt, inst.foil);
     return inst;
   },
   getInstance: (id) => q.getInstance.get(id),
@@ -157,6 +181,12 @@ const store = {
   resolveMeme: (id, status) => q.resolveMeme.run(status, Date.now(), id),
   pendingCountBy: (userId) => q.countPendingBy.get(userId).n,
   pendingCount: () => q.countPending.get().n,
+  approvedCountBy: (userId) => q.countApprovedBy.get(userId).n,
+
+  unlockAchievement: (userId, achId) => q.unlockAch.run(userId, achId, Date.now()),
+  listAchievements: (userId) => q.listAch.all(userId),
+  bumpStat: (userId, key, by = 1) => q.bumpStat.run(userId, key, by),
+  getStat: (userId, key) => (q.getStat.get(userId, key) || { value: 0 }).value,
 
   // Swap card ownership atomically, then mark the trade resolved.
   executeTrade(trade) {
@@ -188,7 +218,7 @@ const store = {
     let skipped = 0;
     for (const i of Object.values(legacy.inventory || {})) {
       if (!knownCards.has(i.cardId)) { skipped++; continue; } // card retired from the catalog
-      q.insertInstance.run(i.id, i.cardId, i.ownerId, i.obtainedAt | 0);
+      q.insertInstance.run(i.id, i.cardId, i.ownerId, i.obtainedAt | 0, 0);
     }
     for (const t of Object.values(legacy.trades || {})) {
       q.insertTrade.run(t.id, t.fromId, t.toId, JSON.stringify(t.offer), JSON.stringify(t.request), t.message || '', t.createdAt | 0);
