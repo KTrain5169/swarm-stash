@@ -171,7 +171,7 @@ function nav(view) {
   if (['binder', 'packs', 'swarm', 'arena', 'market', 'ranks', 'trades', 'submit', 'modqueue'].includes(view)) history.replaceState(null, '', '#' + view);
   $$('.view').forEach((v) => v.classList.add('hidden'));
   $(`#view-${view}`)?.classList.remove('hidden');
-  $('#main-nav button, #guest-nav button').forEach((b) => b.classList.toggle('active', b.dataset.nav === view));
+  $$('#main-nav button, #guest-nav button').forEach((b) => b.classList.toggle('active', b.dataset.nav === view));
   if (view === 'binder') renderBinder();
   if (view === 'swarm') renderSwarm();
   if (view === 'arena') renderArena();
