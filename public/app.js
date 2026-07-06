@@ -825,11 +825,20 @@ function renderBattleScreen() {
     el.appendChild(fighterEl(team[act], { active: true }));
     const bench = document.createElement('div');
     bench.className = 'bench';
+    const foeActive = b.state.teams[oppId] && b.state.teams[oppId][b.state.active[oppId]];
     team.forEach((f, i) => {
       if (i === act) return;
       const canSwap = mine && myTurn && f.hp > 0;
       const fe = fighterEl(f, canSwap ? { onClick: () => battleMove({ type: 'swap', index: i }) } : {});
-      if (canSwap) fe.classList.add('swappable');
+      if (canSwap) {
+        fe.classList.add('swappable');
+        if (foeActive) {
+          const deal = seriesMultClient(f.series, foeActive.series);
+          const take = seriesMultClient(foeActive.series, f.series);
+          fe.insertAdjacentHTML('beforeend',
+            `<div class="swap-detail">deals ×${deal} · takes ×${take} vs ${esc(foeActive.name)}</div>`);
+        }
+      }
       bench.appendChild(fe);
     });
     el.appendChild(bench);
@@ -841,10 +850,9 @@ function renderBattleScreen() {
   controls.replaceChildren();
   if (b.status === 'active') {
     const meF = b.state.teams[state.me.id][b.state.active[state.me.id]];
-    const atk = tradeBtn(`${meF.basicName} ⚔`, 'btn-primary', () => battleMove({ type: 'attack', move: 0 }));
-    const spc = tradeBtn(`${meF.special.name} ✨`, 'btn-primary', () => battleMove({ type: 'attack', move: 1 }));
-    spc.title = meF.special.desc;
-    atk.disabled = spc.disabled = !myTurn;
+    const foeF = b.state.teams[oppId][b.state.active[oppId]];
+    const atk = moveButton(meF, 0, foeF, myTurn);
+    const spc = moveButton(meF, 1, foeF, myTurn);
     controls.append(atk, spc, tradeBtn('forfeit 🏳️', 'btn-ghost', () => {
       if (confirm('Forfeit this battle? The pot goes to your opponent.')) battleMove({ type: 'forfeit' });
     }));
@@ -855,6 +863,46 @@ function renderBattleScreen() {
     d.textContent = l;
     return d;
   }));
+}
+
+// Mirrors the server's series-advantage cycle so the UI can predict damage
+function seriesMultClient(attacker, defender) {
+  const cyc = state.config.battle.cycle;
+  const next = (s) => cyc[(cyc.indexOf(s) + 1) % cyc.length];
+  if (next(attacker) === defender) return 1.3;
+  if (next(defender) === attacker) return 0.75;
+  return 1;
+}
+
+// A move button that spells out what the move will do to the current target,
+// using the exact damage formula the server rolls (±10% variance).
+function moveButton(f, moveIdx, target, myTurn) {
+  const type = moveIdx === 1 ? f.special.type : 'basic';
+  const name = moveIdx === 1 ? `${f.special.name} ✨` : `${f.basicName} ⚔`;
+  const mv = state.config.battle.moves[type] || { power: 0, acc: 1, healRatio: 0 };
+  const parts = [];
+
+  if (type === 'heal') {
+    const heal = Math.min(Math.round(f.maxHp * mv.healRatio), f.maxHp - f.hp);
+    parts.push(heal > 0 ? `heals you ${heal} HP` : 'already at full HP');
+  } else {
+    const mult = seriesMultClient(f.series, target.series);
+    const base = mv.power * (f.atk / Math.max(1, target.def * target.defMod)) * mult;
+    const lo = Math.max(1, Math.round(base * 0.9)), hi = Math.max(1, Math.round(base * 1.1));
+    parts.push(`${lo}–${hi} dmg to ${target.name}`);
+    if (mult > 1) parts.push('super effective!');
+    else if (mult < 1) parts.push('resisted');
+    if (mv.acc < 1) parts.push(`${Math.round(mv.acc * 100)}% to hit`);
+    if (type === 'drain') parts.push('heals you half of it');
+    if (type === 'break') parts.push(`then −20% DEF${target.defMod < 1 ? ` (now ${Math.round(target.defMod * 100)}%)` : ''}`);
+  }
+
+  const btn = document.createElement('button');
+  btn.className = 'btn-primary move-btn';
+  btn.disabled = !myTurn;
+  btn.innerHTML = `<b>${esc(name)}</b><span class="move-detail">${esc(parts.join(' · '))}</span>`;
+  btn.onclick = () => battleMove({ type: 'attack', move: moveIdx });
+  return btn;
 }
 
 async function battleMove(body) {

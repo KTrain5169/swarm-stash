@@ -23,6 +23,16 @@ const BASIC_NAMES = {
   vedal: 'Tutel Toss', collab: 'Collab Chaos', meme: 'Meme Slam',
 };
 
+// move mechanics, keyed by type — served to the client so the UI can
+// explain moves and predict damage with the same numbers the engine uses
+const MOVES = {
+  basic: { power: 22, acc: 1,    healRatio: 0 },
+  heavy: { power: 40, acc: 0.75, healRatio: 0 },
+  drain: { power: 18, acc: 1,    healRatio: 0 },   // + heals half the damage dealt
+  break: { power: 16, acc: 1,    healRatio: 0 },   // + target DEF −20% (floor 50%)
+  heal:  { power: 0,  acc: 1,    healRatio: 0.3 }, // heals 30% of max HP
+};
+
 // the "perk" — one special move per card, chosen by hash
 const SPECIALS = [
   { type: 'heavy', name: 'All In',       desc: 'Big damage, 75% accuracy' },
@@ -72,15 +82,17 @@ function attack(state, attackerId, defenderId, moveIdx) {
   const special = moveIdx === 1;
   const moveName = special ? a.special.name : a.basicName;
 
+  const mv = MOVES[special ? a.special.type : 'basic'];
+
   if (special && a.special.type === 'heal') {
-    const heal = Math.round(a.maxHp * 0.3);
+    const heal = Math.round(a.maxHp * mv.healRatio);
     a.hp = Math.min(a.maxHp, a.hp + heal);
     log(state, `${a.name} uses ${moveName} and heals ${heal} HP 🍪`);
     return false;
   }
 
-  const power = special ? (a.special.type === 'heavy' ? 40 : a.special.type === 'drain' ? 18 : 16) : 22;
-  if (special && a.special.type === 'heavy' && Math.random() > 0.75) {
+  const power = mv.power;
+  if (Math.random() > mv.acc) {
     log(state, `${a.name} goes ${moveName}… and whiffs completely 💨`);
     return false;
   }
@@ -121,4 +133,4 @@ function botPickMove(state, botId) {
   return 0;
 }
 
-module.exports = { statsFor, fighter, attack, botPickMove, seriesMult, alive, activeF, log, SPECIALS };
+module.exports = { statsFor, fighter, attack, botPickMove, seriesMult, alive, activeF, log, SPECIALS, MOVES, CYCLE };

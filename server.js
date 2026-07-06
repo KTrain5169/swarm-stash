@@ -450,7 +450,12 @@ async function handle(req, res) {
   }
 
   // ── public API ──
-  if (p === '/api/config') return sendJSON(res, 200, { discord: DISCORD_ENABLED, devLogin: DEV_LOGIN, packCost: PACK_COST, packSize: PACK_SIZE, daily: DAILY_NEUROS, moderation: MODERATION, foilChance: FOIL_CHANCE, foilMult: FOIL_MULT });
+  if (p === '/api/config') return sendJSON(res, 200, {
+    discord: DISCORD_ENABLED, devLogin: DEV_LOGIN,
+    packCost: PACK_COST, packSize: PACK_SIZE, daily: DAILY_NEUROS,
+    moderation: MODERATION, foilChance: FOIL_CHANCE, foilMult: FOIL_MULT,
+    battle: { moves: battle.MOVES, cycle: battle.CYCLE },
+  });
   if (p === '/api/catalog') {
     const cards = allCards().map((c) => ({ ...c, combat: battle.statsFor(c) }));
     return sendJSON(res, 200, { cards, rarities: RARITIES, series: SERIES });
