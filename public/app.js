@@ -171,7 +171,7 @@ function nav(view) {
   if (['binder', 'packs', 'swarm', 'arena', 'market', 'ranks', 'trades', 'submit', 'modqueue'].includes(view)) history.replaceState(null, '', '#' + view);
   $$('.view').forEach((v) => v.classList.add('hidden'));
   $(`#view-${view}`)?.classList.remove('hidden');
-  $$('#main-nav button').forEach((b) => b.classList.toggle('active', b.dataset.nav === view));
+  $('#main-nav button, #guest-nav button').forEach((b) => b.classList.toggle('active', b.dataset.nav === view));
   if (view === 'binder') renderBinder();
   if (view === 'swarm') renderSwarm();
   if (view === 'arena') renderArena();
@@ -181,13 +181,24 @@ function nav(view) {
   if (view === 'submit') { renderMySubmissions(); renderVote(); }
   if (view === 'modqueue') renderQueue();
 }
+// Not logged in: send the visitor to the login CTA on the home view and pull
+// focus to whichever method is actually configured (Discord button, or the
+// dev-login field if Discord isn't set up) — otherwise clicking a nav item
+// while already on home does nothing visible.
+function goToLogin() {
+  nav('home');
+  const target = state.config.discord ? $('#hero-login') : state.config.devLogin ? $('#dev-name') : null;
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target?.focus({ preventScroll: true });
+}
+
 document.addEventListener('click', (e) => {
   const t = e.target.closest('[data-nav]');
   if (!t) return;
   e.preventDefault();
-  let target = t.dataset.nav;
-  if (state.me && target === 'home') target = 'binder'; // logged in: logo goes to the binder
-  if (!state.me && target !== 'home') target = 'home';
+  const target = t.dataset.nav;
+  if (target === 'home') return nav('home'); // Home always goes home, logged in or not
+  if (!state.me) return goToLogin(); // not logged in: send them to log in, not a no-op
   nav(target);
 });
 
@@ -198,6 +209,8 @@ async function refreshMe() {
   const authed = Boolean(user);
   $('#wallet').classList.toggle('hidden', !authed);
   $('#user-chip').classList.toggle('hidden', !authed);
+  $('#guest-nav').classList.toggle('hidden', authed);
+  $('#main-nav').classList.toggle('hidden', !authed);
   $('#login-btn').classList.toggle('hidden', authed || !state.config.discord);
   $('#hero-login').classList.toggle('hidden', authed || !state.config.discord);
   $('#dev-login').classList.toggle('hidden', authed || !state.config.devLogin);
@@ -1210,12 +1223,7 @@ function renderChatTicker() {
   const authed = await refreshMe();
   if (authed) {
     loadTrades();
-<<<<<<< Updated upstream
-    loadBattles();
-    setInterval(() => { loadTrades(); loadBattles(); }, 30000); // keep the badges fresh
-=======
     setInterval(loadTrades, 30000); // keep trade state fresh in the background
->>>>>>> Stashed changes
     const deep = location.hash.slice(1);
     nav(['binder', 'packs', 'swarm', 'arena', 'market', 'ranks', 'trades', 'submit', 'modqueue'].includes(deep) ? deep : 'binder');
   } else {
