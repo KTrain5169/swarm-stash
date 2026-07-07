@@ -3,3 +3,5 @@
 data
 result
 node_modules
+.node
+*.log
