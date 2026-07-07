@@ -688,13 +688,14 @@ function runPackOpening(pulls, onAllRevealed) {
         pile.style.display = 'none';
         revealedRow.classList.remove('mini');
         revealedRow.classList.add('spread');
-        const miniCards = $$('.flip-card', revealedRow);
-        miniCards.forEach((f, i) => {
-          f.classList.remove('mini-settled');
-          f.style.zIndex = '';
-          f.style.transform = '';
-          f.style.animationDelay = `${i * 70}ms`;
-          f.classList.add('spread-in');
+        flips.forEach(({ flip, card, inst }, i) => {
+          flip.classList.remove('mini-settled');
+          flip.style.zIndex = '';
+          flip.style.transform = '';
+          flip.style.animationDelay = `${i * 70}ms`;
+          flip.classList.add('spread-in');
+          flip.style.cursor = 'zoom-in';
+          flip.onclick = () => zoomCard(card, inst.foil);
         });
       }, 750);
     };

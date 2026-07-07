@@ -556,20 +556,23 @@ a { color: var(--accent-2); }
 }
 
 /* stacked deck: all pulls sit face-down in one pile, only the top (next-reveal)
-   card is interactive. Revealed cards shrink into a small growing stack
-   beside the pile (below it on narrow/mobile screens via the media query),
-   then once every card is drawn that mini stack grows back to full size and
-   spreads out into a row — the "here's everything you got" beat. */
-#stack-pile { position: relative; width: 210px; height: 292px; flex-shrink: 0; }
-#stack-pile .flip-card { position: absolute; inset: 0; margin: auto; }
+   card is interactive. The live card is deliberately big — the reveal is the
+   moment that matters, so it must be fully readable. Revealed cards shrink
+   into a small growing stack beside the pile (below it on narrow/mobile
+   screens via the media query), then once every card is drawn that mini stack
+   grows back to readable size and spreads out into a row — the "here's
+   everything you got" beat. Spread cards zoom on click for a full-size look. */
+.pack-stage.stacked { --reveal-w: clamp(230px, 34vw, 300px); }
+#stack-pile { position: relative; width: var(--reveal-w); height: calc(var(--reveal-w) * 88 / 63); flex-shrink: 0; }
+#stack-pile .flip-card { position: absolute; inset: 0; margin: auto; width: var(--reveal-w); }
 
 #stack-revealed {
-  display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 760px;
+  display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 980px;
   transition: width .5s ease, height .5s ease;
 }
 #stack-revealed.mini {
   position: relative; flex: none;
-  width: 160px; height: 292px;
+  width: 160px; height: calc(var(--reveal-w) * 88 / 63);
 }
 #stack-revealed.mini .flip-card {
   position: absolute; inset: 0; margin: auto;
@@ -577,22 +580,26 @@ a { color: var(--accent-2); }
   transition: width .3s ease;
 }
 #stack-revealed.mini .flip-card.mini-settled { cursor: default; }
-/* "spread" keeps cards at the same size they already are (no regrow) —
-   it just drops out of the absolute mini-stack into a centered static row */
+/* "spread" regrows the cards to a readable size and drops them out of the
+   absolute mini-stack into a centered static row */
 #stack-revealed.spread {
   position: static; width: auto; height: auto;
 }
 #stack-revealed.spread .flip-card {
-  position: static; width: 128px;
+  position: static; width: clamp(170px, 22vw, 230px);
 }
 .flip-card.spread-in { animation: rise .45s ease-out both; }
 .flip-card.settled { animation: none; }
 
 @media (max-width: 640px) {
-  .pack-stage.stacked { flex-direction: column; align-items: center; }
+  .pack-stage.stacked { flex-direction: column; align-items: center; --reveal-w: clamp(210px, 62vw, 260px); }
   #stack-pile { order: 0; }
   #stack-revealed { order: 1; }
+  #stack-revealed.spread .flip-card { width: clamp(150px, 42vw, 190px); }
 }
+
+/* the spread row can outgrow short viewports — allow scrolling instead of clipping */
+#pack-overlay { overflow-y: auto; justify-content: safe center; padding: 28px 12px; }
 
 
 .flip-card { width: 185px; aspect-ratio: 63/88; perspective: 900px; cursor: pointer; animation: dealIn .5s cubic-bezier(.2,.9,.3,1.25) both; transition: opacity .3s, filter .3s, transform .3s; }
