@@ -31,6 +31,7 @@
       <button data-nav="swarm">Swarm</button>
       <button data-nav="arena">Arena <span id="battle-badge" class="badge hidden"></span></button>
       <button data-nav="market">Market</button>
+      <button data-nav="auction">Auction</button>
       <button data-nav="ranks">Ranks</button>
       <button data-nav="trades">Trades <span id="trade-badge" class="badge hidden"></span></button>
       <button data-nav="submit">Submit</button>
@@ -174,10 +175,21 @@
   <section id="view-market" class="view hidden">
     <div class="view-head">
       <h2>Market</h2>
-      <p class="view-sub">Cards listed by swarm members for cold hard neuros. List your own from the binder.</p>
+      <p class="view-sub">Cards listed by swarm members for cold hard neuros, buy now at a fixed price. List your own from the binder. Looking to bid instead? Check <b>Auction</b> in the nav.</p>
     </div>
     <div class="card-grid" id="market-grid"></div>
     <p class="empty-note hidden" id="market-empty">Nothing for sale. Capitalism sleeps.</p>
+  </section>
+
+  <!-- ═══ auction house ═══ -->
+  <section id="view-auction" class="view hidden">
+    <div class="view-head">
+      <h2>Auction House</h2>
+      <p class="view-sub">Bid it up. Auctions run 1 hour to 1 week &mdash; the high bid wins when the clock hits zero, and bidders' neuros are held in escrow until then.</p>
+      <button id="start-auction-btn" class="btn-primary">Start an auction</button>
+    </div>
+    <div class="card-grid" id="auction-grid"></div>
+    <p class="empty-note hidden" id="auction-empty">No auctions running. Start one from your binder.</p>
   </section>
 
   <!-- ═══ ranks: leaderboard + achievements ═══ -->
@@ -301,6 +313,41 @@
 <div id="zoom-overlay" class="overlay hidden">
   <div id="zoom-holder"></div>
   <button id="zoom-close" title="Close">✕ close</button>
+</div>
+
+<!-- start-auction modal -->
+<div id="auction-modal" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Start an auction</h3>
+      <button class="btn-ghost" id="auction-modal-close">✕</button>
+    </div>
+    <div class="trade-col">
+      <h4>Pick a card <span id="apick-count" class="pick-count">0/1</span></h4>
+      <div class="mini-grid" id="apick-grid"></div>
+    </div>
+    <div class="trade-send-row">
+      <label class="auction-field">starting bid ⚡ <input id="auction-start-bid" type="number" min="1" max="100000" value="100"></label>
+      <label class="auction-field">duration (hrs) <input id="auction-duration" type="number" min="1" max="168" value="24"></label>
+      <button id="auction-start-send" class="btn-primary">Start auction ⏱</button>
+    </div>
+  </div>
+</div>
+
+<!-- generic prompt modal (window.prompt isn't supported in every embed) -->
+<div id="prompt-overlay" class="overlay hidden">
+  <div class="modal modal-sm">
+    <div class="modal-head">
+      <h3 id="prompt-title">Enter a value</h3>
+      <button class="btn-ghost" id="prompt-cancel-x">✕</button>
+    </div>
+    <p id="prompt-message" class="hint"></p>
+    <input id="prompt-input" type="number">
+    <div class="trade-send-row">
+      <button id="prompt-cancel" class="btn-ghost">Cancel</button>
+      <button id="prompt-ok" class="btn-primary">OK</button>
+    </div>
+  </div>
 </div>
 
 <div id="toasts"></div>

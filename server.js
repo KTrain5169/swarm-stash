@@ -874,6 +874,61 @@ async function handle(req, res) {
     return sendJSON(res, 200, { ok: true, neuros: store.getUser(me.id).neuros, unlocked: unlocked.map(achOut) });
   }
 
+  // ── auction house ──
+  const MIN_AUCTION_HOURS = 1, MAX_AUCTION_HOURS = 168; // 1 week cap
+
+  function auctionOut(a) {
+    return {
+      id: a.id, sellerId: a.sellerId, sellerName: a.sellerName, sellerAvatar: a.sellerAvatar,
+      startingBid: a.startingBid, currentBid: a.currentBid, bidCount: a.bidCount,
+      currentBidderId: a.currentBidderId,
+      currentBidderName: a.bidderName || null,
+      endsAt: a.endsAt, createdAt: a.createdAt,
+      card: instOut(store.getInstance(a.instanceId) || { id: a.instanceId, cardId: 'retired', ownerId: a.sellerId, obtainedAt: a.createdAt, foil: 0 }),
+    };
+  }
+
+  if (p === '/api/market/auctions' && req.method === 'GET') {
+    store.resolveExpiredAuctions();
+    return sendJSON(res, 200, { auctions: store.activeAuctions().map(auctionOut) });
+  }
+
+  if (p === '/api/market/auctions' && req.method === 'POST') {
+    store.resolveExpiredAuctions();
+    const { instanceId, startingBid, durationHours } = await readBody(req);
+    const inst = store.getInstance(instanceId);
+    if (!inst || inst.ownerId !== me.id) return err(res, 404, 'card not found in your binder');
+    if (store.lockedInstanceIds().has(inst.id)) return err(res, 400, 'card is already listed, auctioned, or locked in a trade');
+    const bid = Math.floor(Number(startingBid));
+    if (!Number.isFinite(bid) || bid < 1 || bid > 100000) return err(res, 400, 'starting bid must be 1–100000 neuros');
+    const hours = Math.floor(Number(durationHours));
+    if (!Number.isFinite(hours) || hours < MIN_AUCTION_HOURS || hours > MAX_AUCTION_HOURS)
+      return err(res, 400, `duration must be ${MIN_AUCTION_HOURS}–${MAX_AUCTION_HOURS} hours`);
+    const auction = store.createAuction({ instanceId: inst.id, sellerId: me.id, startingBid: bid, durationHours: hours });
+    return sendJSON(res, 200, { auction: auctionOut({ ...auction, sellerName: me.name, sellerAvatar: me.avatar, bidCount: 0 }) });
+  }
+
+  const auctionAction = p.match(/^\/api\/market\/auctions\/([^/]+)\/(bid|cancel)$/);
+  if (auctionAction && req.method === 'POST') {
+    store.resolveExpiredAuctions();
+    const [, id, action] = auctionAction;
+    if (action === 'cancel') {
+      const a = store.getAuction(id);
+      if (!a || a.status !== 'active') return err(res, 404, 'auction not found');
+      if (a.sellerId !== me.id) return err(res, 403, 'not your auction');
+      try { store.cancelAuction(id); }
+      catch (e) { return err(res, 400, e.message); }
+      return sendJSON(res, 200, { ok: true });
+    }
+    const { amount } = await readBody(req);
+    const bidAmount = Math.floor(Number(amount));
+    if (!Number.isFinite(bidAmount) || bidAmount < 1) return err(res, 400, 'invalid bid amount');
+    try {
+      store.placeBid(id, me.id, bidAmount);
+    } catch (e) { return err(res, 400, e.message); }
+    return sendJSON(res, 200, { ok: true, neuros: store.getUser(me.id).neuros, auction: auctionOut(store.activeAuctions().find((a) => a.id === id)) });
+  }
+
   // ── showcase (pinned cards on your public binder) ──
   if (p === '/api/showcase' && req.method === 'POST') {
     const { instanceIds } = await readBody(req);
@@ -929,3 +984,10 @@ http.createServer((req, res) => {
   console.log(`🐝 Swarm Stash running at ${BASE_URL}`);
   console.log(`   Discord OAuth: ${DISCORD_ENABLED ? 'enabled' : 'NOT configured (using dev login)'} · dev login: ${DEV_LOGIN ? 'on' : 'off'}`);
 });
+
+// Settle auctions whose clock ran out even if nobody happens to load the
+// market page right at that moment — escrowed neuros shouldn't just sit there.
+setInterval(() => {
+  try { store.resolveExpiredAuctions(); }
+  catch (e) { console.error('auction sweep failed:', e); }
+}, 60_000);
