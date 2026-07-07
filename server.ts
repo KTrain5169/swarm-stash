@@ -12,6 +12,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { makeSession, sessionCookie, sign } from './server/utils/index.ts'
 import { stripTypeScriptTypes } from 'node:module';
 import {
   CARDS, RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEUROS, STARTING_NEUROS,
@@ -22,40 +23,14 @@ import * as battle from './features/battle.ts';
 import type { Fighter } from './features/battle.ts';
 import store from './features/db.ts';
 import type { UserRow, InstanceRow, Trade, Battle, MemeRow, MemeStatus, AuctionRow } from './features/db.ts';
+import { allCards, APPROVAL_COPIES, BASE_URL, DEV_LOGIN, DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_ENABLED, getCard, IMAGE_TYPES, isAdmin, MAX_MEME_BYTES, MAX_PENDING_PER_USER, MODERATION, REDIRECT_URI, SESSION_SECRET, UPLOAD_DIR } from './server/utils/consts.ts';
 
-import { sendJSON } from './server/utils/index.ts';
-
-const PORT = Number(process.env.PORT || 3000);
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
-const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
-const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
-const DISCORD_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET);
-const DEV_LOGIN = process.env.ALLOW_DEV_LOGIN === '1' || !DISCORD_ENABLED;
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-const REDIRECT_URI = `${BASE_URL}/auth/discord/callback`;
+import { avatarSVG, instOut, oauthStates, publicUser, sendJSON } from './server/utils/index.ts';
 
 // ─── Meme submission portal config ───────────────────────────────────────────
 // ADMINS: comma-separated Discord user IDs (or dev-login names) who moderate
 // submissions. If empty, submissions are auto-approved (fine for local play).
-const ADMINS = (process.env.ADMINS || '').split(',').map((s) => s.trim()).filter(Boolean);
-const MODERATION = ADMINS.length > 0;
-const isAdmin = (u: UserRow | null | undefined): boolean =>
-  Boolean(u) && (ADMINS.includes(u!.discordId ?? '') || (!u!.discordId && ADMINS.includes(u!.name)));
-
-const UPLOAD_DIR = path.join(process.env.DATA_DIR || path.join(import.meta.dirname, 'data'), 'memes');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-const MAX_MEME_BYTES = 5 * 1024 * 1024;
-const MAX_PENDING_PER_USER = 3;
-const APPROVAL_COPIES = 2; // copies the submitter receives when their meme is minted
-
-// magic-byte sniffing — only real raster images become cards (no SVG: script risk)
-const IMAGE_TYPES: { ext: string; mime: string; match: (b: Buffer) => boolean }[] = [
-  { ext: '.png', mime: 'image/png', match: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
-  { ext: '.jpg', mime: 'image/jpeg', match: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  { ext: '.gif', mime: 'image/gif', match: (b) => b.subarray(0, 4).toString('latin1') === 'GIF8' },
-  { ext: '.webp', mime: 'image/webp', match: (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP' },
-];
 
 // deterministic rarity from the image hash, matching normal pack odds
 function rarityFromHash(seed: string): Rarity {
@@ -69,13 +44,6 @@ function rarityFromHash(seed: string): Rarity {
 }
 
 // ─── Sessions (HMAC-signed cookie) ───────────────────────────────────────────
-const b64u = (buf: string | Buffer): string => Buffer.from(buf).toString('base64url');
-const sign = (data: string): string => crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-
-function makeSession(uid: string): string {
-  const payload = b64u(JSON.stringify({ uid, exp: Date.now() + 30 * 864e5 }));
-  return `${payload}.${sign(payload)}`;
-}
 function readSession(req: IncomingMessage): UserRow | null {
   const raw = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith('sess='));
   if (!raw) return null;
@@ -89,22 +57,9 @@ function readSession(req: IncomingMessage): UserRow | null {
     return store.getUser(uid) || null;
   } catch { return null; }
 }
-const sessionCookie = (token: string): string =>
-  `sess=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}`;
 
 // ─── Game helpers ────────────────────────────────────────────────────────────
 // The card pool is the built-in lore set plus every approved community meme.
-const RETIRED: Card = { id: 'retired', name: 'Retired Card', series: 'meme', rarity: 'common', emoji: '❓', flavor: 'Lost to the archives.' };
-
-const memeToCard = (m: MemeRow): Card => ({
-  id: m.id, name: m.name, series: 'meme', rarity: m.rarity,
-  emoji: '🖼️', flavor: `submitted by ${m.submitterName}`,
-  image: `/memes/${m.file}`,
-});
-
-const allCards = (): Card[] => CARDS.concat(store.memesByStatus('approved').map(memeToCard));
-const getCard = (id: string): Card => allCards().find((c) => c.id === id) || RETIRED;
-
 function rollCard(): Card {
   const cards = allCards();
   const total = Object.values(RARITIES).reduce((s, r) => s + r.weight, 0);
@@ -286,16 +241,6 @@ function resolveWeeklyVote(): void {
   }
 }
 
-function publicUser(u: UserRow) {
-  const counts = store.userCounts(u.id);
-  return {
-    id: u.id, name: u.name, avatar: u.avatar, bot: Boolean(u.bot),
-    cardCount: counts.cardCount, uniqueCount: counts.uniqueCount,
-    joinedAt: u.createdAt,
-  };
-}
-const instOut = (i: InstanceRow) => ({ instanceId: i.id, cardId: i.cardId, ownerId: i.ownerId, obtainedAt: i.obtainedAt, foil: Boolean(i.foil) });
-
 function tradeOut(t: Trade) {
   const resolve = (id: string) => {
     const inst = store.getInstance(id);
@@ -354,15 +299,15 @@ function readBody(req: IncomingMessage, maxBytes = 64 * 1024): Promise<any> {
 // serve it with the types stripped — the same machinery Node uses to run
 // server.ts, no build step and no committed artifact. Cached until the file
 // changes (mtime), so it strips once per edit, not per request.
-let appJsCache: { mtimeMs: number; code: string } | null = null;
-function appJs(): string {
-  const src = path.join(import.meta.dirname, 'src', 'app.ts');
-  const { mtimeMs } = fs.statSync(src);
-  if (!appJsCache || appJsCache.mtimeMs !== mtimeMs) {
-    appJsCache = { mtimeMs, code: stripTypeScriptTypes(fs.readFileSync(src, 'utf8')) };
-  }
-  return appJsCache.code;
-}
+// let appJsCache: { mtimeMs: number; code: string } | null = null;
+// function appJs(): string {
+//   const src = path.join(import.meta.dirname, 'src', 'app.ts');
+//   const { mtimeMs } = fs.statSync(src);
+//   if (!appJsCache || appJsCache.mtimeMs !== mtimeMs) {
+//     appJsCache = { mtimeMs, code: stripTypeScriptTypes(fs.readFileSync(src, 'utf8')) };
+//   }
+//   return appJsCache.code;
+// }
 
 function serveStatic(res: ServerResponse, urlPath: string): void {
   const file = path.normalize(path.join(import.meta.dirname, urlPath === '/' ? 'index.html' : urlPath));
@@ -378,165 +323,22 @@ function serveStatic(res: ServerResponse, urlPath: string): void {
   });
 }
 
-// Deterministic pastel identicon for bot / dev accounts
-function avatarSVG(seed: string): string {
-  const h = crypto.createHash('sha1').update(seed).digest();
-  const hue = h[0]! * 360 / 255, hue2 = (hue + 60) % 360;
-  const initial = seed.replace(/[^a-zA-Z0-9]/g, ' ').trim().charAt(0).toUpperCase() || '?';
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="hsl(${hue} 70% 65%)"/><stop offset="1" stop-color="hsl(${hue2} 70% 45%)"/>
-  </linearGradient></defs>
-  <rect width="96" height="96" fill="url(#g)"/>
-  <text x="48" y="62" font-family="sans-serif" font-size="44" font-weight="bold" fill="rgba(255,255,255,.92)" text-anchor="middle">${initial}</text>
-</svg>`;
-}
-
-const oauthStates = new Map<string, number>(); // state -> expiry
-
 // ─── Routes ──────────────────────────────────────────────────────────────────
-async function handle(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
+async function handle(req: IncomingMessage, res: ServerResponse): Promise<unknown | void> {
   const url = new URL(req.url || '/', BASE_URL);
   const p = url.pathname;
   const me = readSession(req);
-
-  // ── auth ──
-  if (p === '/auth/discord' && req.method === 'GET') {
-    if (!DISCORD_ENABLED) return err(res, 400, 'Discord OAuth is not configured. Set DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET in .env');
-    const state = crypto.randomBytes(16).toString('hex');
-    oauthStates.set(state, Date.now() + 10 * 60e3);
-    const auth = new URL('https://discord.com/oauth2/authorize');
-    auth.search = new URLSearchParams({ client_id: DISCORD_CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: 'code', scope: 'identify', state }).toString();
-    res.writeHead(302, { Location: auth.href });
-    return res.end();
-  }
-
-  if (p === '/auth/discord/callback' && req.method === 'GET') {
-    const state = url.searchParams.get('state') ?? '';
-    const code = url.searchParams.get('code');
-    const exp = oauthStates.get(state);
-    oauthStates.delete(state);
-    if (!code || !exp || exp < Date.now()) { res.writeHead(302, { Location: '/?login=failed' }); return res.end(); }
-    try {
-      const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ client_id: DISCORD_CLIENT_ID, client_secret: DISCORD_CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI }),
-      });
-      if (!tokenRes.ok) throw new Error(`token exchange ${tokenRes.status}`);
-      const { access_token } = await tokenRes.json() as { access_token: string };
-      const userRes = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${access_token}` } });
-      if (!userRes.ok) throw new Error(`user fetch ${userRes.status}`);
-      const d = await userRes.json() as { id: string; username: string; global_name?: string; avatar?: string };
-      const avatar = d.avatar
-        ? `https://cdn.discordapp.com/avatars/${d.id}/${d.avatar}.png?size=128`
-        : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(d.id) >> 22n) % 6}.png`;
-
-      let user = store.getUserByDiscord(d.id);
-      if (!user) {
-        user = store.createUser({ discordId: d.id, name: d.global_name || d.username, avatar, neuros: STARTING_NEUROS });
-        for (const c of STARTER_CARDS) store.grantCard(user.id, c);
-      } else {
-        store.setProfile(user.id, d.global_name || d.username, avatar); // keep profile in sync with Discord
-      }
-      res.writeHead(302, { 'Set-Cookie': sessionCookie(makeSession(user.id)), Location: '/' });
-      return res.end();
-    } catch (e) {
-      console.error('OAuth failed:', (e as Error).message);
-      res.writeHead(302, { Location: '/?login=failed' });
-      return res.end();
-    }
-  }
-
-  if (p === '/auth/dev' && req.method === 'POST') {
-    if (!DEV_LOGIN) return err(res, 403, 'dev login disabled');
-    const { name } = await readBody(req);
-    const clean = String(name || '').trim().slice(0, 32);
-    if (!clean) return err(res, 400, 'name required');
-    let user = store.getDevUserByName(clean);
-    if (!user) {
-      user = store.createUser({ name: clean, avatar: `/api/avatar/${encodeURIComponent(clean)}.svg`, neuros: STARTING_NEUROS });
-      for (const c of STARTER_CARDS) store.grantCard(user.id, c);
-    }
-    res.writeHead(200, { 'Set-Cookie': sessionCookie(makeSession(user.id)), 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true }));
-  }
 
   if (p === '/auth/logout' && req.method === 'POST') {
     res.writeHead(200, { 'Set-Cookie': 'sess=; Path=/; Max-Age=0', 'Content-Type': 'application/json' });
     return res.end('{"ok":true}');
   }
 
-  // ── public API ──
-  if (p === '/api/config') return sendJSON(res, 200, {
-    discord: DISCORD_ENABLED, devLogin: DEV_LOGIN,
-    packCost: PACK_COST, packSize: PACK_SIZE, daily: DAILY_NEUROS,
-    moderation: MODERATION, foilChance: FOIL_CHANCE, foilMult: FOIL_MULT,
-    battle: { moves: battle.MOVES, cycle: battle.CYCLE },
-  });
-  if (p === '/api/catalog') {
-    const cards = allCards().map((c) => ({ ...c, combat: battle.statsFor(c) }));
-    return sendJSON(res, 200, { cards, rarities: RARITIES, series: SERIES });
-  }
-
   // the SPA script — public/app.ts with types stripped at serve time
-  if (p === '/app.js' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'text/javascript' });
-    return res.end(appJs());
-  }
-
-  // uploaded meme images
-  const memeFile = p.match(/^\/memes\/([^/]+)$/);
-  if (memeFile) {
-    const file = path.join(UPLOAD_DIR, path.basename(decodeURIComponent(memeFile[1]!)));
-    return fs.readFile(file, (e, buf) => {
-      if (e) { res.writeHead(404); return res.end('not found'); }
-      const type = IMAGE_TYPES.find((t) => file.endsWith(t.ext));
-      res.writeHead(200, {
-        'Content-Type': type ? type.mime : 'application/octet-stream',
-        'X-Content-Type-Options': 'nosniff',
-        'Cache-Control': 'public, max-age=86400, immutable',
-      });
-      res.end(buf);
-    });
-  }
-
-  const avatarMatch = p.match(/^\/api\/avatar\/(.+)\.svg$/);
-  if (avatarMatch) {
-    res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' });
-    return res.end(avatarSVG(decodeURIComponent(avatarMatch[1]!)));
-  }
-
-  if (p === '/api/me') {
-    if (!me) return sendJSON(res, 200, { user: null });
-    return sendJSON(res, 200, { user: {
-      ...publicUser(me), neuros: me.neuros,
-      dailyReady: Date.now() - me.lastDaily > 20 * 3600e3,
-      isAdmin: isAdmin(me),
-      modPending: isAdmin(me) ? store.pendingCount() : 0,
-    } });
-  }
-
-  if (p === '/api/users') {
-    const users = store.listUsers().map(publicUser).sort((a, b) => b.cardCount - a.cardCount);
-    return sendJSON(res, 200, { users });
-  }
-
-  if (p === '/api/leaderboard') {
-    // binder value (foils count ×FOIL_MULT) + 100 clout per achievement; bots don't rank
-    const board = store.listUsers().filter((u) => !u.bot).map((u) => {
-      const insts = store.listByOwner(u.id);
-      const value = insts.reduce((s, i) => s + instValue(i), 0);
-      const achievements = store.listAchievements(u.id).length;
-      return {
-        id: u.id, name: u.name, avatar: u.avatar,
-        cards: insts.length, unique: new Set(insts.map((i) => i.cardId)).size,
-        foils: insts.filter((i) => i.foil).length,
-        achievements, score: value + achievements * 100,
-      };
-    }).sort((a, b) => b.score - a.score);
-    return sendJSON(res, 200, { board });
-  }
+  // if (p === '/app.js' && req.method === 'GET') {
+  //   res.writeHead(200, { 'Content-Type': 'text/javascript' });
+  //   return res.end(appJs());
+  // }
 
   if (p === '/api/collection') {
     const targetId = url.searchParams.get('user') || me?.id;
@@ -995,8 +797,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<unknow
     return sendJSON(res, 200, { ok: true, myVote: meme.id });
   }
 
-  if (p.startsWith('/api/') || p.startsWith('/auth/')) return err(res, 404, 'no such endpoint');
-  return serveStatic(res, p);
+  // if (p.startsWith('/api/') || p.startsWith('/auth/')) return err(res, 404, 'no such endpoint');
+  // return serveStatic(res, p);
 }
 
 export default (req: http.IncomingMessage, res: http.ServerResponse<http.IncomingMessage> & { req: http.IncomingMessage; }) => {

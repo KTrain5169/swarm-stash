@@ -22,6 +22,7 @@
   },
   "include": [
     "*.ts",
+    "server",
     "features/achievements.ts",
     "features/battle.ts",
     "features/catalog.ts",
