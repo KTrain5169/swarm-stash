@@ -502,21 +502,106 @@ a { color: var(--accent-2); }
   position: fixed; inset: 0; z-index: 100;
   background: color-mix(in oklab, var(--bg) 88%, black);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px;
+  overflow-y: auto;
   animation: fadeIn .25s ease-out;
+}
+/* Collect button floats at a fixed spot near the bottom of the viewport so
+   it's always reachable no matter how tall the card stack gets — it never
+   has to be scrolled to or ends up hidden behind the cards. */
+#pack-overlay #pack-done {
+  position: fixed;
+  left: 50%; bottom: 44px;
+  transform: translateX(-50%);
+  z-index: 110;
 }
 @keyframes fadeIn { from { opacity: 0; } }
 .pack-stage { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; perspective: 1100px; padding: 20px; }
-.pack-stage .pack { cursor: pointer; animation: packShake .5s ease-in-out infinite; }
+.pack-stage.stacked { flex-direction: row; align-items: flex-start; gap: 34px; }
+.pack-stage .pack { cursor: grab; touch-action: none; user-select: none; animation: packShake .5s ease-in-out infinite; }
+.pack-stage .pack.gripping { animation: none; cursor: grabbing; }
 @keyframes packShake { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2.5deg) translateY(-4px); } }
-.pack-stage .pack.tearing { animation: packTear .55s ease-in forwards; }
-@keyframes packTear {
-  30% { transform: scale(1.08) rotate(-3deg); }
-  60% { transform: scale(1.14) rotate(3deg); filter: brightness(1.6); }
-  100% { transform: scale(1.6); opacity: 0; filter: brightness(3); }
-}
-.stage-hint { position: absolute; bottom: 12vh; color: var(--ink-dim); font-family: var(--font-mono); font-size: 13px; letter-spacing: 2px; animation: pulse 1.6s infinite; }
 
-.flip-card { width: 185px; aspect-ratio: 63/88; perspective: 900px; cursor: pointer; animation: dealIn .5s cubic-bezier(.2,.9,.3,1.25) both; }
+/* ── rip-open: the pack splits into two clipped halves that fly apart, plus
+   a bright flash at the tear line — a real rip, not a fade/scale-out ── */
+.pack-wrap { position: relative; width: 250px; height: 350px; flex-shrink: 0; }
+.pack-wrap .pack { position: absolute; inset: 0; }
+.pack-half {
+  animation: none !important;
+  transition: none;
+  pointer-events: none;
+}
+.pack-half-top { clip-path: inset(0 0 50% 0); transform-origin: 50% 0%; }
+.pack-half-bottom { clip-path: inset(50% 0 0 0); transform-origin: 50% 100%; }
+.pack-half.ripping.pack-half-top {
+  transition: transform .6s cubic-bezier(.5, 0, .75, .3), opacity .5s ease-in .2s;
+  transform: translateY(-170px) rotate(-22deg);
+  opacity: 0;
+}
+.pack-half.ripping.pack-half-bottom {
+  transition: transform .6s cubic-bezier(.5, 0, .75, .3), opacity .5s ease-in .2s;
+  transform: translateY(170px) rotate(16deg);
+  opacity: 0;
+}
+.pack-burst {
+  position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; z-index: 5;
+  transform: translate(-50%, -50%) scale(0);
+  border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, #fff, var(--accent-hot) 55%, transparent 72%);
+  animation: packBurst .5s ease-out forwards;
+}
+@keyframes packBurst {
+  0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+  40% { transform: translate(-50%, -50%) scale(5); opacity: .9; }
+  100% { transform: translate(-50%, -50%) scale(11); opacity: 0; }
+}
+
+/* stacked deck: all pulls sit face-down in one pile, only the top (next-reveal)
+   card is interactive. Revealed cards shrink into a small growing stack
+   beside the pile (below it on narrow/mobile screens via the media query),
+   then once every card is drawn that mini stack grows back to full size and
+   spreads out into a row — the "here's everything you got" beat. */
+#stack-pile { position: relative; width: 210px; height: 292px; flex-shrink: 0; }
+#stack-pile .flip-card { position: absolute; inset: 0; margin: auto; }
+
+#stack-revealed {
+  display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; max-width: 760px;
+  transition: width .5s ease, height .5s ease;
+}
+#stack-revealed.mini {
+  position: relative; flex: none;
+  width: 160px; height: 292px;
+}
+#stack-revealed.mini .flip-card {
+  position: absolute; inset: 0; margin: auto;
+  width: 128px;
+  transition: width .3s ease;
+}
+#stack-revealed.mini .flip-card.mini-settled { cursor: default; }
+/* "spread" keeps cards at the same size they already are (no regrow) —
+   it just drops out of the absolute mini-stack into a centered static row */
+#stack-revealed.spread {
+  position: static; width: auto; height: auto;
+}
+#stack-revealed.spread .flip-card {
+  position: static; width: 128px;
+}
+.flip-card.spread-in { animation: rise .45s ease-out both; }
+.flip-card.settled { animation: none; }
+
+@media (max-width: 640px) {
+  .pack-stage.stacked { flex-direction: column; align-items: center; }
+  #stack-pile { order: 0; }
+  #stack-revealed { order: 1; }
+}
+
+
+.flip-card { width: 185px; aspect-ratio: 63/88; perspective: 900px; cursor: pointer; animation: dealIn .5s cubic-bezier(.2,.9,.3,1.25) both; transition: opacity .3s, filter .3s, transform .3s; }
+.flip-card.locked { opacity: .4; filter: grayscale(.6); pointer-events: none; transform: scale(.94); }
+.flip-card.next-reveal { animation: nextGlow 1.3s ease-in-out infinite; }
+@keyframes nextGlow {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); transform: translateY(0); }
+  50% { filter: drop-shadow(0 0 22px var(--accent)); transform: translateY(-6px); }
+}
 .flip-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .65s cubic-bezier(.35,.1,.3,1.1); }
 .flip-card.flipped .flip-inner { transform: rotateY(180deg); }
 .flip-face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 14px; }
