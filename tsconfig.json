@@ -7,8 +7,12 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
-    "types": ["node"],
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
@@ -16,5 +20,12 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["*.ts"]
+  "include": [
+    "*.ts",
+    "features/achievements.ts",
+    "features/battle.ts",
+    "features/catalog.ts",
+    "features/db.ts",
+    "features/env.ts"
+  ]
 }

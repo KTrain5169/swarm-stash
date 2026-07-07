@@ -2,7 +2,7 @@
 // Serves the SPA, handles Discord OAuth, and runs the trading API on SQLite
 // (node:sqlite). Runs as TypeScript directly via Node's native type stripping.
 
-import './env.ts'; // must load .env before db.ts reads DATA_DIR
+import './features/env.ts'; // must load .env before db.ts reads DATA_DIR
 
 import { FastResponse } from 'srvx';
 globalThis.Response = FastResponse;
@@ -16,12 +16,14 @@ import { stripTypeScriptTypes } from 'node:module';
 import {
   CARDS, RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEUROS, STARTING_NEUROS,
   STARTER_CARDS, FOIL_CHANCE, FOIL_MULT, type Card, type Rarity,
-} from './catalog.ts';
-import { ACHIEVEMENTS, type Achievement, type AchievementCtx } from './achievements.ts';
-import * as battle from './battle.ts';
-import type { Fighter } from './battle.ts';
-import store from './db.ts';
-import type { UserRow, InstanceRow, Trade, Battle, MemeRow, MemeStatus, AuctionRow } from './db.ts';
+} from './features/catalog.ts';
+import { ACHIEVEMENTS, type Achievement, type AchievementCtx } from './features/achievements.ts';
+import * as battle from './features/battle.ts';
+import type { Fighter } from './features/battle.ts';
+import store from './features/db.ts';
+import type { UserRow, InstanceRow, Trade, Battle, MemeRow, MemeStatus, AuctionRow } from './features/db.ts';
+
+import { sendJSON } from './server/utils/index.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
@@ -49,9 +51,9 @@ const APPROVAL_COPIES = 2; // copies the submitter receives when their meme is m
 
 // magic-byte sniffing — only real raster images become cards (no SVG: script risk)
 const IMAGE_TYPES: { ext: string; mime: string; match: (b: Buffer) => boolean }[] = [
-  { ext: '.png',  mime: 'image/png',  match: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
-  { ext: '.jpg',  mime: 'image/jpeg', match: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  { ext: '.gif',  mime: 'image/gif',  match: (b) => b.subarray(0, 4).toString('latin1') === 'GIF8' },
+  { ext: '.png', mime: 'image/png', match: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
+  { ext: '.jpg', mime: 'image/jpeg', match: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  { ext: '.gif', mime: 'image/gif', match: (b) => b.subarray(0, 4).toString('latin1') === 'GIF8' },
   { ext: '.webp', mime: 'image/webp', match: (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP' },
 ];
 
@@ -335,11 +337,7 @@ function botConsiderTrade(trade: Trade): Trade {
 // ─── HTTP plumbing ───────────────────────────────────────────────────────────
 const MIME: Record<string, string> = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
 
-function sendJSON(res: ServerResponse, status: number, obj: unknown): void {
-  const body = JSON.stringify(obj);
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
-  res.end(body);
-}
+
 const err = (res: ServerResponse, status: number, message: string): void => sendJSON(res, status, { error: message });
 
 // Bodies are small JSON blobs of varying shape; routes validate what they use.
@@ -358,7 +356,7 @@ function readBody(req: IncomingMessage, maxBytes = 64 * 1024): Promise<any> {
 // changes (mtime), so it strips once per edit, not per request.
 let appJsCache: { mtimeMs: number; code: string } | null = null;
 function appJs(): string {
-  const src = path.join(import.meta.dirname, 'public', 'app.ts');
+  const src = path.join(import.meta.dirname, 'src', 'app.ts');
   const { mtimeMs } = fs.statSync(src);
   if (!appJsCache || appJsCache.mtimeMs !== mtimeMs) {
     appJsCache = { mtimeMs, code: stripTypeScriptTypes(fs.readFileSync(src, 'utf8')) };
@@ -1006,11 +1004,7 @@ export default (req: http.IncomingMessage, res: http.ServerResponse<http.Incomin
     console.error(`${req.method} ${req.url} →`, e);
     if (!res.headersSent) err(res, 500, 'internal error');
   });
-}
-// .listen(PORT, () => {
-// console.log(`🐝 Swarm Stash running at ${BASE_URL}`);
-//   console.log(`   Discord OAuth: ${DISCORD_ENABLED ? 'enabled' : 'NOT configured (using dev login)'} · dev login: ${DEV_LOGIN ? 'on' : 'off'}`);
-// });
+};
 
 // Settle auctions whose clock ran out even if nobody happens to load the
 // market page right at that moment — escrowed neuros shouldn't just sit there.
