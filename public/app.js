@@ -498,13 +498,13 @@ $('#open-pack-btn').addEventListener('click', async () => {
 // pack visually splits into two halves that fly apart, same as tearing a
 // real foil pack. Pulls then reveal strictly one at a time from a stacked
 // deck: only the top card is interactive, the rest wait locked underneath.
-// Each reveal shrinks into a small pile beside (or, on narrow screens,
-// below) the deck; once every card has been drawn, that small pile grows
-// back to full size and spreads out into a row — the "here's everything
-// you got" beat. Pulls are re-ordered (never re-rolled) so the best card
-// in the pack — whatever actually rolled server-side — lands last. No
-// instructional text; the grip cursor, drag feedback, and pulsing
-// highlight on the live card are the only affordances.
+// Each reveal slides onto a same-size face-up pile beside (or, on narrow
+// screens, below) the deck — same size so the freshly flipped card stays
+// readable; once every card has been drawn the pile spreads out into a
+// row — the "here's everything you got" beat. Pulls are re-ordered (never
+// re-rolled) so the best card in the pack — whatever actually rolled
+// server-side — lands last. No instructional text; the grip cursor, drag
+// feedback, and pulsing highlight on the live card are the only affordances.
 function runPackOpening(pulls, onAllRevealed) {
   const byId = cardById();
   const overlay = $('#pack-overlay');

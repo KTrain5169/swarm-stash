@@ -556,12 +556,10 @@ a { color: var(--accent-2); }
 }
 
 /* stacked deck: all pulls sit face-down in one pile, only the top (next-reveal)
-   card is interactive. The live card is deliberately big — the reveal is the
-   moment that matters, so it must be fully readable. Revealed cards shrink
-   into a small growing stack beside the pile (below it on narrow/mobile
-   screens via the media query), then once every card is drawn that mini stack
-   grows back to readable size and spreads out into a row — the "here's
-   everything you got" beat. Spread cards zoom on click for a full-size look. */
+   card is interactive. Both piles share --reveal-w so a revealed card stays
+   exactly as big (and readable) on the face-up stack as it was when flipped.
+   Once every card is drawn the face-up stack spreads out into a row — the
+   "here's everything you got" beat. Spread cards zoom on click. */
 .pack-stage.stacked { --reveal-w: clamp(230px, 34vw, 300px); }
 #stack-pile { position: relative; width: var(--reveal-w); height: calc(var(--reveal-w) * 88 / 63); flex-shrink: 0; }
 #stack-pile .flip-card { position: absolute; inset: 0; margin: auto; width: var(--reveal-w); }
@@ -572,11 +570,11 @@ a { color: var(--accent-2); }
 }
 #stack-revealed.mini {
   position: relative; flex: none;
-  width: 160px; height: calc(var(--reveal-w) * 88 / 63);
+  width: var(--reveal-w); height: calc(var(--reveal-w) * 88 / 63);
 }
 #stack-revealed.mini .flip-card {
   position: absolute; inset: 0; margin: auto;
-  width: 128px;
+  width: var(--reveal-w);
   transition: width .3s ease;
 }
 #stack-revealed.mini .flip-card.mini-settled { cursor: default; }
