@@ -4,37 +4,72 @@
 // from the card id hash — same trick as meme rarity — so every copy of a
 // card fights identically. Foils get +10% on everything.
 
-const crypto = require('node:crypto');
+import crypto from 'node:crypto';
+import type { Card, Rarity, SeriesId } from './catalog.ts';
+
+export type MoveType = 'basic' | 'heavy' | 'drain' | 'break' | 'heal';
+export type SpecialType = Exclude<MoveType, 'basic'>;
+
+export interface MoveSpec { power: number; acc: number; healRatio: number }
+export interface Special { type: SpecialType; name: string; desc: string }
+
+export interface CombatStats {
+  maxHp: number;
+  atk: number;
+  def: number;
+  spd: number;
+  special: Special;
+}
+
+// Battle-state fighter snapshot (stats frozen at battle start)
+export interface Fighter extends CombatStats {
+  cardId: string;
+  name: string;
+  series: SeriesId;
+  rarity: Rarity;
+  emoji: string;
+  foil: boolean;
+  hp: number;
+  defMod: number; // DEF multiplier, shredded by 'break' (floor 0.5)
+  basicName: string;
+}
+
+export interface BattleState {
+  teams: Record<string, Fighter[] | null>; // opponent team is null while pending
+  active: Record<string, number>;
+  turn: string | null;
+  log: string[];
+}
 
 // series advantage cycle: each series hits the next one for 1.3×, and is
 // resisted (0.75×) by the previous one. meme closes the loop back to neuro.
-const CYCLE = ['neuro', 'evil', 'duo', 'vedal', 'collab', 'meme'];
-const nextIn = (s) => CYCLE[(CYCLE.indexOf(s) + 1) % CYCLE.length];
-function seriesMult(attacker, defender) {
+export const CYCLE: SeriesId[] = ['neuro', 'evil', 'duo', 'vedal', 'collab', 'meme'];
+const nextIn = (s: SeriesId): SeriesId => CYCLE[(CYCLE.indexOf(s) + 1) % CYCLE.length]!;
+export function seriesMult(attacker: SeriesId, defender: SeriesId): number {
   if (nextIn(attacker) === defender) return 1.3;
   if (nextIn(defender) === attacker) return 0.75;
   return 1;
 }
 
-const RARITY_BONUS = { common: 0, uncommon: 2, rare: 4, epic: 7, legendary: 10 };
+const RARITY_BONUS: Record<Rarity, number> = { common: 0, uncommon: 2, rare: 4, epic: 7, legendary: 10 };
 
-const BASIC_NAMES = {
+const BASIC_NAMES: Record<SeriesId, string> = {
   neuro: 'buh Blast', evil: 'Raspy Cackle', duo: 'Twin Strike',
   vedal: 'Tutel Toss', collab: 'Collab Chaos', meme: 'Meme Slam',
 };
 
 // move mechanics, keyed by type — served to the client so the UI can
 // explain moves and predict damage with the same numbers the engine uses
-const MOVES = {
+export const MOVES: Record<MoveType, MoveSpec> = {
   basic: { power: 22, acc: 1,    healRatio: 0 },
-  heavy: { power: 40, acc: 0.75, healRatio: 0 },
+  heavy: { power: 40, acc: 0.75, healRatio: 0 },   // 25% whiff chance
   drain: { power: 18, acc: 1,    healRatio: 0 },   // + heals half the damage dealt
   break: { power: 16, acc: 1,    healRatio: 0 },   // + target DEF −20% (floor 50%)
   heal:  { power: 0,  acc: 1,    healRatio: 0.3 }, // heals 30% of max HP
 };
 
 // the "perk" — one special move per card, chosen by hash
-const SPECIALS = [
+export const SPECIALS: Special[] = [
   { type: 'heavy', name: 'All In',       desc: 'Big damage, 75% accuracy' },
   { type: 'drain', name: 'Heart Steal',  desc: 'Damage + heal half of it' },
   { type: 'break', name: 'Filter Break', desc: 'Damage + shreds enemy DEF 20%' },
@@ -42,21 +77,20 @@ const SPECIALS = [
 ];
 
 // Deterministic combat sheet for a card (all copies identical; foil +10%)
-function statsFor(card, foil = false) {
+export function statsFor(card: Card, foil = false): CombatStats {
   const h = crypto.createHash('sha1').update(card.id).digest();
   const b = RARITY_BONUS[card.rarity] ?? 0;
   const f = foil ? 1.1 : 1;
   return {
-    maxHp: Math.round((70 + h[0] % 45 + b * 8) * f),
-    atk:   Math.round((22 + h[1] % 18 + b * 4) * f),
-    def:   Math.round((16 + h[2] % 14 + b * 3) * f),
-    spd:   Math.round((10 + h[3] % 30 + b * 2) * f),
-    special: SPECIALS[h[4] % SPECIALS.length],
+    maxHp: Math.round((70 + h[0]! % 45 + b * 8) * f),
+    atk:   Math.round((22 + h[1]! % 18 + b * 4) * f),
+    def:   Math.round((16 + h[2]! % 14 + b * 3) * f),
+    spd:   Math.round((10 + h[3]! % 30 + b * 2) * f),
+    special: SPECIALS[h[4]! % SPECIALS.length]!,
   };
 }
 
-// Battle-state fighter snapshot (stats frozen at battle start)
-function fighter(card, foil) {
+export function fighter(card: Card, foil: boolean): Fighter {
   const s = statsFor(card, foil);
   return {
     cardId: card.id, name: card.name, series: card.series, rarity: card.rarity,
@@ -66,17 +100,18 @@ function fighter(card, foil) {
   };
 }
 
-const alive = (team) => team.filter((f) => f.hp > 0);
-const activeF = (state, uid) => state.teams[uid][state.active[uid]];
+export const alive = (team: Fighter[]): Fighter[] => team.filter((f) => f.hp > 0);
+export const activeF = (state: BattleState, uid: string): Fighter =>
+  state.teams[uid]![state.active[uid]!]!;
 
-function log(state, msg) {
+export function log(state: BattleState, msg: string): void {
   state.log.push(msg);
   if (state.log.length > 60) state.log.shift();
 }
 
 // Executes one attack (moveIdx 0 = basic, 1 = special). Mutates state.
 // Returns true if the defender's whole team is down.
-function attack(state, attackerId, defenderId, moveIdx) {
+export function attack(state: BattleState, attackerId: string, defenderId: string, moveIdx: number): boolean {
   const a = activeF(state, attackerId);
   const d = activeF(state, defenderId);
   const special = moveIdx === 1;
@@ -115,16 +150,17 @@ function attack(state, attackerId, defenderId, moveIdx) {
 
   if (d.hp === 0) {
     log(state, `${d.name} is down! 💀`);
-    const next = state.teams[defenderId].findIndex((f) => f.hp > 0);
+    const team = state.teams[defenderId]!;
+    const next = team.findIndex((f) => f.hp > 0);
     if (next === -1) return true;
     state.active[defenderId] = next;
-    log(state, `${state.teams[defenderId][next].name} steps up!`);
+    log(state, `${team[next]!.name} steps up!`);
   }
   return false;
 }
 
 // Simple bot brain: heal when hurt, mix specials in, otherwise jab.
-function botPickMove(state, botId) {
+export function botPickMove(state: BattleState, botId: string): number {
   const me = activeF(state, botId);
   if (me.special.type === 'heal' && me.hp < me.maxHp * 0.45) return 1;
   if (me.special.type === 'heavy' || me.special.type === 'drain' || me.special.type === 'break') {
@@ -132,5 +168,3 @@ function botPickMove(state, botId) {
   }
   return 0;
 }
-
-module.exports = { statsFor, fighter, attack, botPickMove, seriesMult, alive, activeF, log, SPECIALS, MOVES, CYCLE };

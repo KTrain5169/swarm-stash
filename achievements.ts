@@ -1,15 +1,37 @@
 // Swarm Stash — achievement definitions
-// Each check is a pure function over a ctx snapshot built in server.js.
+// Each check is a pure function over a ctx snapshot built in server.ts.
 // Unlocks are permanent (trading a card away later doesn't revoke them).
 
-const { CARDS } = require('./catalog');
+import { CARDS, type SeriesId } from './catalog.ts';
 
-const bySeries = {};
-for (const c of CARDS) (bySeries[c.series] ||= []).push(c.id);
+// snapshot of everything an achievement check may look at
+export interface AchievementCtx {
+  stat: (key: string) => number;
+  ownedIds: Set<string>;
+  hasFoil: boolean;
+  hasLegendary: boolean;
+  hasFoilLegendary: boolean;
+  neuros: number;
+  approvedMemes: number;
+  wotwWins: number;
+}
 
-const setDone = (series) => (ctx) => bySeries[series].every((id) => ctx.ownedIds.has(id));
+export interface Achievement {
+  id: string;
+  name: string;
+  emoji: string;
+  reward: number;
+  desc: string;
+  check: (ctx: AchievementCtx) => boolean;
+}
 
-const ACHIEVEMENTS = [
+const bySeries: Partial<Record<SeriesId, string[]>> = {};
+for (const c of CARDS) (bySeries[c.series] ??= []).push(c.id);
+
+const setDone = (series: SeriesId) => (ctx: AchievementCtx) =>
+  (bySeries[series] ?? []).every((id) => ctx.ownedIds.has(id));
+
+export const ACHIEVEMENTS: Achievement[] = [
   { id: 'pack-1',     name: 'Pack Ripper',        emoji: '📦', reward: 50,   desc: 'Open your first pack',            check: (ctx) => ctx.stat('packs') >= 1 },
   { id: 'pack-10',    name: 'Certified Ripper',   emoji: '🃏', reward: 150,  desc: 'Open 10 packs',                   check: (ctx) => ctx.stat('packs') >= 10 },
   { id: 'pack-50',    name: 'Gambling Problem',   emoji: '🎰', reward: 500,  desc: 'Open 50 packs',                   check: (ctx) => ctx.stat('packs') >= 50 },
@@ -24,7 +46,7 @@ const ACHIEVEMENTS = [
   { id: 'battle-10',  name: 'Arena Menace',       emoji: '🏟️', reward: 400,  desc: 'Win 10 battles',                  check: (ctx) => ctx.stat('battleWins') >= 10 },
   { id: 'merchant',   name: 'Entrepreneur',       emoji: '💰', reward: 50,   desc: 'Sell a card on the market',       check: (ctx) => ctx.stat('marketSales') >= 1 },
   { id: 'wotw',       name: 'Meme of the Week',   emoji: '🗳️', reward: 200,  desc: 'Win the weekly meme vote',        check: (ctx) => ctx.wotwWins >= 1 },
-  { id: 'rich',       name: 'Neuro Hoarder',     emoji: '⚡', reward: 0,    desc: 'Hold 1,000 neuros at once',      check: (ctx) => ctx.neuros >= 1000 },
+  { id: 'rich',       name: 'Neuro Hoarder',      emoji: '⚡', reward: 0,    desc: 'Hold 1,000 neuros at once',       check: (ctx) => ctx.neuros >= 1000 },
   { id: 'set-neuro',  name: 'Heart of the Swarm', emoji: '💗', reward: 600,  desc: 'Complete the Neuro-sama series',  check: setDone('neuro') },
   { id: 'set-evil',   name: 'Certified Evil',     emoji: '😈', reward: 400,  desc: 'Complete the Evil Neuro series',  check: setDone('evil') },
   { id: 'set-duo',    name: 'Double Trouble',     emoji: '👯', reward: 300,  desc: 'Complete The Twins series',       check: setDone('duo') },
@@ -32,5 +54,3 @@ const ACHIEVEMENTS = [
   { id: 'set-collab', name: 'Collab Enjoyer',     emoji: '🎪', reward: 250,  desc: 'Complete the Collabs series',     check: setDone('collab') },
   { id: 'all-cards',  name: 'Grand Archivist',    emoji: '📚', reward: 2000, desc: 'Complete every lore series',      check: (ctx) => CARDS.every((c) => ctx.ownedIds.has(c.id)) },
 ];
-
-module.exports = { ACHIEVEMENTS };

@@ -2,10 +2,19 @@
   "name": "swarm-stash",
   "version": "1.0.0",
   "description": "Swarm Stash — trade Neuro-sama & Evil Neuro meme cards with the swarm",
-  "main": "server.js",
+  "type": "module",
+  "main": "server.ts",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.ts",
+    "build": "tsc -p tsconfig.frontend.json",
+    "check": "tsc -p tsconfig.json && tsc -p tsconfig.frontend.json --noEmit"
   },
-  "engines": { "node": ">=22.13" },
-  "license": "MIT"
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  }
 }

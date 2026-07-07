@@ -1,0 +1,17 @@
+{
+  // Frontend config: public/app.ts compiles to public/app.js (committed, so
+  // the game still runs from a bare checkout with no build step). Looser than
+  // the server config — the SPA predates the TS conversion and gets tightened
+  // incrementally; new frontend code should still be written with types.
+  "compilerOptions": {
+    // app.ts is a classic browser script (no imports/exports), so the module
+    // setting never affects the emit — app.js lands next to app.ts.
+    "target": "ES2022",
+    "module": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": false,
+    "noImplicitAny": false,
+    "removeComments": false
+  },
+  "include": ["public/app.ts"]
+}

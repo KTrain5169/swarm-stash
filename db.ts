@@ -1,11 +1,97 @@
-// SQLite storage layer (node:sqlite — built into Node ≥22.13, zero dependencies).
+// SQLite storage layer (node:sqlite — built into Node ≥22.18, zero runtime deps).
 
-const { DatabaseSync } = require('node:sqlite');
-const fs = require('node:fs');
-const path = require('node:path');
-const crypto = require('node:crypto');
+import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import type { Rarity } from './catalog.ts';
+import type { BattleState } from './battle.ts';
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+// ─── row shapes ──────────────────────────────────────────────────────────────
+// SQLite has no booleans: bot/foil are 0|1 integers; showcase is a JSON string.
+
+export interface UserRow {
+  id: string;
+  discordId: string | null;
+  name: string;
+  avatar: string;
+  bot: number;
+  neuros: number;
+  lastDaily: number;
+  createdAt: number;
+  showcase: string;
+}
+
+export interface InstanceRow {
+  id: string;
+  cardId: string;
+  ownerId: string;
+  obtainedAt: number;
+  foil: number;
+}
+
+export type TradeStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+export interface Trade {
+  id: string;
+  fromId: string;
+  toId: string;
+  offer: string[];   // instance ids
+  request: string[]; // instance ids
+  message: string;
+  status: TradeStatus;
+  createdAt: number;
+  resolvedAt: number | null;
+}
+type TradeRow = Omit<Trade, 'offer' | 'request'> & { offer: string; request: string };
+
+export type MemeStatus = 'pending' | 'approved' | 'rejected';
+export interface MemeRow {
+  id: string;
+  name: string;
+  file: string;
+  rarity: Rarity;
+  submitterId: string;
+  status: MemeStatus;
+  createdAt: number;
+  resolvedAt: number | null;
+  submitterName?: string;   // present on joined queries
+  submitterAvatar?: string;
+}
+
+export type BattleStatus = 'pending' | 'active' | 'done' | 'declined' | 'cancelled';
+export interface Battle {
+  id: string;
+  fromId: string;
+  toId: string;
+  wager: number;
+  status: BattleStatus;
+  state: BattleState;
+  winnerId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+type BattleRow = Omit<Battle, 'state'> & { state: string };
+
+export type ListingStatus = 'active' | 'sold' | 'cancelled';
+export interface ListingRow {
+  id: string;
+  instanceId: string;
+  sellerId: string;
+  price: number;
+  status: ListingStatus;
+  buyerId: string | null;
+  createdAt: number;
+  resolvedAt: number | null;
+  sellerName?: string;    // present on joined queries
+  sellerAvatar?: string;
+}
+
+export interface AchievementRow { achId: string; unlockedAt: number }
+export interface WeeklyWinnerRow { week: string; memeId: string; submitterId: string; decidedAt: number }
+export interface VoteTally { memeId: string; n: number }
+
+// ─── database ────────────────────────────────────────────────────────────────
+const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'swarm.db'));
@@ -117,7 +203,7 @@ try { db.exec(`ALTER TABLE inventory ADD COLUMN foil INTEGER NOT NULL DEFAULT 0`
 try { db.exec(`ALTER TABLE users ADD COLUMN showcase TEXT NOT NULL DEFAULT '[]'`); } catch { /* up to date */ }
 try { db.exec(`ALTER TABLE users RENAME COLUMN neurons TO neuros`); } catch { /* up to date */ }
 
-const newId = (prefix) => `${prefix}_${crypto.randomBytes(6).toString('hex')}`;
+const newId = (prefix: string): string => `${prefix}_${crypto.randomBytes(6).toString('hex')}`;
 
 // ─── prepared statements ─────────────────────────────────────────────────────
 const q = {
@@ -192,104 +278,113 @@ const q = {
   getStat: db.prepare(`SELECT value FROM stats WHERE userId = ? AND key = ?`),
 };
 
-const rowToTrade = (r) => r && { ...r, offer: JSON.parse(r.offer), request: JSON.parse(r.request) };
-const rowToBattle = (r) => r && { ...r, state: JSON.parse(r.state) };
+const rowToTrade = (r: TradeRow | undefined): Trade | undefined =>
+  r && { ...r, offer: JSON.parse(r.offer), request: JSON.parse(r.request) };
+const rowToBattle = (r: BattleRow | undefined): Battle | undefined =>
+  r && { ...r, state: JSON.parse(r.state) };
 
 // ─── public API ──────────────────────────────────────────────────────────────
 const store = {
   newId,
 
-  createUser({ discordId = null, name, avatar, bot = false, neuros = 0 }) {
-    const user = { id: newId('u'), discordId, name, avatar, bot: bot ? 1 : 0, neuros, lastDaily: 0, createdAt: Date.now() };
+  createUser({ discordId = null, name, avatar, bot = false, neuros = 0 }:
+             { discordId?: string | null; name: string; avatar: string; bot?: boolean; neuros?: number }): UserRow {
+    const user: UserRow = { id: newId('u'), discordId, name, avatar, bot: bot ? 1 : 0, neuros, lastDaily: 0, createdAt: Date.now(), showcase: '[]' };
     q.insertUser.run(user.id, user.discordId, user.name, user.avatar, user.bot, user.neuros, user.lastDaily, user.createdAt);
     return user;
   },
-  getUser: (id) => q.getUser.get(id),
-  getUserByDiscord: (discordId) => q.getUserByDiscord.get(discordId),
-  getDevUserByName: (name) => q.getDevUserByName.get(name),
-  getUserByName: (name) => q.getUserByName.get(name),
-  listUsers: () => q.listUsers.all(),
-  setProfile: (id, name, avatar) => q.setProfile.run(name, avatar, id),
-  setNeuros: (id, neuros) => q.setNeuros.run(neuros, id),
-  claimDaily: (id, neuros, when) => q.setDaily.run(neuros, when, id),
-  userCounts: (id) => q.userCounts.get(id),
+  getUser: (id: string) => q.getUser.get(id) as unknown as UserRow | undefined,
+  getUserByDiscord: (discordId: string) => q.getUserByDiscord.get(discordId) as unknown as UserRow | undefined,
+  getDevUserByName: (name: string) => q.getDevUserByName.get(name) as unknown as UserRow | undefined,
+  getUserByName: (name: string) => q.getUserByName.get(name) as unknown as UserRow | undefined,
+  listUsers: () => q.listUsers.all() as unknown as UserRow[],
+  setProfile: (id: string, name: string, avatar: string) => q.setProfile.run(name, avatar, id),
+  setNeuros: (id: string, neuros: number) => q.setNeuros.run(neuros, id),
+  claimDaily: (id: string, neuros: number, when: number) => q.setDaily.run(neuros, when, id),
+  userCounts: (id: string) => q.userCounts.get(id) as unknown as { cardCount: number; uniqueCount: number },
 
-  grantCard(ownerId, cardId, foil = false) {
-    const inst = { id: newId('c'), cardId, ownerId, obtainedAt: Date.now(), foil: foil ? 1 : 0 };
+  grantCard(ownerId: string, cardId: string, foil = false): InstanceRow {
+    const inst: InstanceRow = { id: newId('c'), cardId, ownerId, obtainedAt: Date.now(), foil: foil ? 1 : 0 };
     q.insertInstance.run(inst.id, inst.cardId, inst.ownerId, inst.obtainedAt, inst.foil);
     return inst;
   },
-  getInstance: (id) => q.getInstance.get(id),
-  listByOwner: (ownerId) => q.listByOwner.all(ownerId),
-  deleteInstance: (id) => q.deleteInstance.run(id),
-  transferInstance: (id, ownerId) => q.setOwner.run(ownerId, id),
+  getInstance: (id: string) => q.getInstance.get(id) as unknown as InstanceRow | undefined,
+  listByOwner: (ownerId: string) => q.listByOwner.all(ownerId) as unknown as InstanceRow[],
+  deleteInstance: (id: string) => q.deleteInstance.run(id),
+  transferInstance: (id: string, ownerId: string) => q.setOwner.run(ownerId, id),
 
-  createTrade({ fromId, toId, offer, request, message }) {
-    const trade = { id: newId('t'), fromId, toId, offer, request, message, status: 'pending', createdAt: Date.now(), resolvedAt: null };
+  createTrade({ fromId, toId, offer, request, message }:
+              { fromId: string; toId: string; offer: string[]; request: string[]; message: string }): Trade {
+    const trade: Trade = { id: newId('t'), fromId, toId, offer, request, message, status: 'pending', createdAt: Date.now(), resolvedAt: null };
     q.insertTrade.run(trade.id, fromId, toId, JSON.stringify(offer), JSON.stringify(request), message, trade.createdAt);
     return trade;
   },
-  getTrade: (id) => rowToTrade(q.getTrade.get(id)),
-  listTradesFor: (userId) => q.listTradesFor.all(userId, userId).map(rowToTrade),
-  resolveTrade: (id, status) => q.resolveTrade.run(status, Date.now(), id),
+  getTrade: (id: string) => rowToTrade(q.getTrade.get(id) as unknown as TradeRow | undefined),
+  listTradesFor: (userId: string) => (q.listTradesFor.all(userId, userId) as unknown as TradeRow[]).map((r) => rowToTrade(r)!),
+  resolveTrade: (id: string, status: TradeStatus) => q.resolveTrade.run(status, Date.now(), id),
 
   // instances that must not change hands: sides of pending trades + active market listings
-  lockedInstanceIds() {
-    const locked = new Set();
-    for (const r of q.pendingTrades.all()) {
-      for (const id of [...JSON.parse(r.offer), ...JSON.parse(r.request)]) locked.add(id);
+  lockedInstanceIds(): Set<string> {
+    const locked = new Set<string>();
+    for (const r of q.pendingTrades.all() as unknown as { offer: string; request: string }[]) {
+      for (const id of [...JSON.parse(r.offer), ...JSON.parse(r.request)] as string[]) locked.add(id);
     }
-    for (const r of q.activeListingIds.all()) locked.add(r.instanceId);
+    for (const r of q.activeListingIds.all() as unknown as { instanceId: string }[]) locked.add(r.instanceId);
     return locked;
   },
 
-  createMeme({ id, name, file, rarity, submitterId, status }) {
+  createMeme({ id, name, file, rarity, submitterId, status }:
+             { id: string; name: string; file: string; rarity: Rarity; submitterId: string; status: MemeStatus }): void {
     q.insertMeme.run(id, name, file, rarity, submitterId, status, Date.now());
   },
-  getMeme: (id) => q.getMeme.get(id),
-  memesByStatus: (status) => q.memesByStatus.all(status),
-  memesBySubmitter: (userId) => q.memesBySubmitter.all(userId),
-  resolveMeme: (id, status) => q.resolveMeme.run(status, Date.now(), id),
-  pendingCountBy: (userId) => q.countPendingBy.get(userId).n,
-  pendingCount: () => q.countPending.get().n,
-  approvedCountBy: (userId) => q.countApprovedBy.get(userId).n,
+  getMeme: (id: string) => q.getMeme.get(id) as unknown as MemeRow | undefined,
+  memesByStatus: (status: MemeStatus) => q.memesByStatus.all(status) as unknown as MemeRow[],
+  memesBySubmitter: (userId: string) => q.memesBySubmitter.all(userId) as unknown as MemeRow[],
+  resolveMeme: (id: string, status: MemeStatus) => q.resolveMeme.run(status, Date.now(), id),
+  pendingCountBy: (userId: string) => (q.countPendingBy.get(userId) as unknown as { n: number }).n,
+  pendingCount: () => (q.countPending.get() as unknown as { n: number }).n,
+  approvedCountBy: (userId: string) => (q.countApprovedBy.get(userId) as unknown as { n: number }).n,
 
-  unlockAchievement: (userId, achId) => q.unlockAch.run(userId, achId, Date.now()),
-  listAchievements: (userId) => q.listAch.all(userId),
-  bumpStat: (userId, key, by = 1) => q.bumpStat.run(userId, key, by),
-  getStat: (userId, key) => (q.getStat.get(userId, key) || { value: 0 }).value,
+  unlockAchievement: (userId: string, achId: string) => q.unlockAch.run(userId, achId, Date.now()),
+  listAchievements: (userId: string) => q.listAch.all(userId) as unknown as AchievementRow[],
+  bumpStat: (userId: string, key: string, by = 1) => q.bumpStat.run(userId, key, by),
+  getStat: (userId: string, key: string) => ((q.getStat.get(userId, key) as unknown as { value: number } | undefined) ?? { value: 0 }).value,
 
-  createBattle({ fromId, toId, wager, status, state }) {
-    const battle = { id: newId('b'), fromId, toId, wager, status, state, winnerId: null, createdAt: Date.now(), updatedAt: Date.now() };
-    q.insertBattle.run(battle.id, fromId, toId, wager, status, JSON.stringify(state), battle.createdAt, battle.updatedAt);
-    return this.getBattle(battle.id);
+  createBattle({ fromId, toId, wager, status, state }:
+               { fromId: string; toId: string; wager: number; status: BattleStatus; state: BattleState }): Battle {
+    const id = newId('b');
+    const now = Date.now();
+    q.insertBattle.run(id, fromId, toId, wager, status, JSON.stringify(state), now, now);
+    return rowToBattle(q.getBattle.get(id) as unknown as BattleRow)!;
   },
-  getBattle: (id) => rowToBattle(q.getBattle.get(id)),
-  listBattlesFor: (userId) => q.listBattlesFor.all(userId, userId).map(rowToBattle),
-  saveBattle: (b) => q.updateBattle.run(b.status, JSON.stringify(b.state), b.winnerId, Date.now(), b.id),
+  getBattle: (id: string) => rowToBattle(q.getBattle.get(id) as unknown as BattleRow | undefined),
+  listBattlesFor: (userId: string) => (q.listBattlesFor.all(userId, userId) as unknown as BattleRow[]).map((r) => rowToBattle(r)!),
+  saveBattle: (b: Battle) => q.updateBattle.run(b.status, JSON.stringify(b.state), b.winnerId, Date.now(), b.id),
 
-  createListing({ instanceId, sellerId, price }) {
+  createListing({ instanceId, sellerId, price }: { instanceId: string; sellerId: string; price: number }): ListingRow {
     const id = newId('l');
     q.insertListing.run(id, instanceId, sellerId, price, Date.now());
-    return q.getListing.get(id);
+    return q.getListing.get(id) as unknown as ListingRow;
   },
-  getListing: (id) => q.getListing.get(id),
-  activeListings: () => q.activeListings.all(),
-  resolveListing: (id, status, buyerId = null) => q.resolveListing.run(status, buyerId, Date.now(), id),
+  getListing: (id: string) => q.getListing.get(id) as unknown as ListingRow | undefined,
+  activeListings: () => q.activeListings.all() as unknown as ListingRow[],
+  resolveListing: (id: string, status: ListingStatus, buyerId: string | null = null) =>
+    q.resolveListing.run(status, buyerId, Date.now(), id),
 
-  setShowcase: (userId, instanceIds) => q.setShowcase.run(JSON.stringify(instanceIds), userId),
+  setShowcase: (userId: string, instanceIds: string[]) => q.setShowcase.run(JSON.stringify(instanceIds), userId),
 
-  castVote: (week, voterId, memeId) => q.upsertVote.run(week, voterId, memeId, Date.now()),
-  votesForWeek: (week) => q.votesForWeek.all(week),
-  myVote: (week, voterId) => (q.myVote.get(week, voterId) || {}).memeId || null,
-  getWinner: (week) => q.getWinner.get(week),
-  latestWinner: () => q.latestWinner.get(),
-  recordWinner: (week, memeId, submitterId) => q.insertWinner.run(week, memeId, submitterId, Date.now()),
-  wotwWinsBy: (userId) => q.wotwWinsBy.get(userId).n,
-  setMemeRarity: (id, rarity) => q.setMemeRarity.run(rarity, id),
+  castVote: (week: string, voterId: string, memeId: string) => q.upsertVote.run(week, voterId, memeId, Date.now()),
+  votesForWeek: (week: string) => q.votesForWeek.all(week) as unknown as VoteTally[],
+  myVote: (week: string, voterId: string): string | null =>
+    (q.myVote.get(week, voterId) as unknown as { memeId: string } | undefined)?.memeId ?? null,
+  getWinner: (week: string) => q.getWinner.get(week) as unknown as WeeklyWinnerRow | undefined,
+  latestWinner: () => q.latestWinner.get() as unknown as WeeklyWinnerRow | undefined,
+  recordWinner: (week: string, memeId: string, submitterId: string) => q.insertWinner.run(week, memeId, submitterId, Date.now()),
+  wotwWinsBy: (userId: string) => (q.wotwWinsBy.get(userId) as unknown as { n: number }).n,
+  setMemeRarity: (id: string, rarity: Rarity) => q.setMemeRarity.run(rarity, id),
 
   // Swap card ownership atomically, then mark the trade resolved.
-  executeTrade(trade) {
+  executeTrade(trade: Trade): void {
     db.exec('BEGIN');
     try {
       for (const id of trade.offer) q.setOwner.run(trade.toId, id);
@@ -303,4 +398,4 @@ const store = {
   },
 };
 
-module.exports = store;
+export default store;

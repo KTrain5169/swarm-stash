@@ -17,16 +17,29 @@ Trade **Neuro-sama** & **Evil Neuro** meme cards with the swarm — like Pokémo
 - 🤖 Four seeded swarm bots with collections respond to trades instantly — they accept any fair-value offer
 - ⚡ Economy: 350 starting neuros, +150 daily claim, recycle duplicates for neuros by rarity
 
-Zero npm dependencies — plain Node ≥22.13, SQLite storage (built-in `node:sqlite`) in `data/swarm.db`. Schema upgrades from older versions are applied automatically on start.
+Written in TypeScript with zero runtime dependencies — the server runs its `.ts` files directly on plain Node ≥22.18 (native type stripping), with SQLite storage (built-in `node:sqlite`) in `data/swarm.db`. Schema upgrades from older versions are applied automatically on start.
 
 ## Run it
 
 ```bash
-./setup.sh              # any distro/macOS: installs Node ≥22.13 if needed, writes .env, starts
-# or, if you already have Node ≥22.13:
-node server.js          # → http://localhost:3000
-# on NixOS: nix run .    (or: nix-shell -p nodejs_22 --run "node server.js")
+./setup.sh              # any distro/macOS: installs Node ≥22.18 if needed, writes .env, starts
+# or, if you already have Node ≥22.18:
+node server.ts          # → http://localhost:3000
+# on NixOS: nix run .    (or: nix-shell -p nodejs_22 --run "node server.ts")
 ```
+
+## Development
+
+TypeScript is a dev-only dependency (typechecking + compiling the frontend):
+
+```bash
+npm install             # pulls typescript + @types/node
+npm run check           # typecheck server (strict) and frontend
+npm run build           # recompile public/app.ts → public/app.js (committed)
+```
+
+The browser loads the committed `public/app.js`, so players never need a build step —
+but if you edit `public/app.ts`, run `npm run build` before committing.
 
 `setup.sh` tries your package manager first (apt/dnf/pacman/zypper/apk/brew) and otherwise
 drops the official Node build into `./.node` — no root needed. `./setup.sh --service`

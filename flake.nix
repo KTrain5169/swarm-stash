@@ -17,9 +17,9 @@
           nativeBuildInputs = [ pkgs.makeWrapper ];
           installPhase = ''
             mkdir -p $out/share/swarm-stash $out/bin
-            cp -r *.js public $out/share/swarm-stash/
+            cp -r *.ts public $out/share/swarm-stash/
             makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/swarm-stash \
-              --add-flags "$out/share/swarm-stash/server.js" \
+              --add-flags "$out/share/swarm-stash/server.ts" \
               --set-default DATA_DIR ./data
           '';
           meta = {

@@ -1,0 +1,20 @@
+{
+  // Server-side config: these .ts files run directly on Node ≥22.18 via native
+  // type stripping — tsc only typechecks, it never emits. That means only
+  // erasable TS syntax is allowed (no enums, no namespaces, no parameter
+  // properties) and imports must use the real .ts extension.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  },
+  "include": ["*.ts"]
+}

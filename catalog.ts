@@ -1,8 +1,19 @@
 // Swarm Stash — card catalog
-// series: neuro | evil | duo | vedal | collab
-// rarity: common | uncommon | rare | epic | legendary
 
-const RARITIES = {
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+export type SeriesId = 'neuro' | 'evil' | 'duo' | 'vedal' | 'collab' | 'meme';
+
+export interface Card {
+  id: string;
+  name: string;
+  series: SeriesId;
+  rarity: Rarity;
+  emoji: string;
+  flavor: string;
+  image?: string; // set for community meme cards
+}
+
+export const RARITIES: Record<Rarity, { weight: number; value: number; label: string }> = {
   common:    { weight: 54,  value: 10,  label: 'Common' },
   uncommon:  { weight: 26,  value: 25,  label: 'Uncommon' },
   rare:      { weight: 13,  value: 60,  label: 'Rare' },
@@ -10,7 +21,7 @@ const RARITIES = {
   legendary: { weight: 1.5, value: 500, label: 'Legendary' },
 };
 
-const CARDS = [
+export const CARDS: Card[] = [
   // ─── Neuro-sama ───
   { id: 'buh',                name: 'buh',                    series: 'neuro', rarity: 'legendary', emoji: '😐', flavor: 'The single syllable that wins every argument. buh.' },
   { id: 'gymbag',             name: 'Gymbag',                 series: 'neuro', rarity: 'epic',      emoji: '🎒', flavor: 'gymbag gymbag gymbag gymbag gymbag. You had to be there. You’re still there.' },
@@ -60,7 +71,7 @@ const CARDS = [
   { id: 'collab-chaos',       name: 'Collab Chaos Theory',    series: 'collab', rarity: 'common',   emoji: '🎪', flavor: 'Add one more streamer and watch the entropy double.' },
 ];
 
-const SERIES = {
+export const SERIES: Record<SeriesId, { label: string; hue: number; hue2: number }> = {
   meme:   { label: 'Swarm Memes', hue: 210, hue2: 45 },
   neuro:  { label: 'Neuro-sama', hue: 330, hue2: 195 },
   evil:   { label: 'Evil Neuro', hue: 355, hue2: 265 },
@@ -69,12 +80,10 @@ const SERIES = {
   collab: { label: 'Collabs',    hue: 45,  hue2: 330 },
 };
 
-const PACK_COST = 100;
-const PACK_SIZE = 4;
-const DAILY_NEUROS = 150;
-const STARTING_NEUROS = 350;
-const STARTER_CARDS = ['cookie-gremlin', 'softest-threat', 'alright'];
-const FOIL_CHANCE = 0.05; // per pulled card
-const FOIL_MULT = 4;      // recycle / trade value multiplier for foils
-
-module.exports = { CARDS, RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEUROS, STARTING_NEUROS, STARTER_CARDS, FOIL_CHANCE, FOIL_MULT };
+export const PACK_COST = 100;
+export const PACK_SIZE = 4;
+export const DAILY_NEUROS = 150;
+export const STARTING_NEUROS = 350;
+export const STARTER_CARDS: string[] = ['cookie-gremlin', 'softest-threat', 'alright'];
+export const FOIL_CHANCE = 0.05; // per pulled card
+export const FOIL_MULT = 4;      // recycle / trade value multiplier for foils

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─── Swarm Stash setup ────────────────────────────────────────────────────────
 # Gets the game running from a bare checkout on any distro:
-#   1. finds or installs Node ≥ 22.13 — tries the system package manager first,
+#   1. finds or installs Node ≥ 22.18 — tries the system package manager first,
 #      falls back to the official Node binary tarball in ./.node (no root)
 #   2. writes .env with a fresh SESSION_SECRET (+ optional Discord OAuth creds)
 #   3. starts the server — or installs a systemd user service with --service
@@ -9,14 +9,14 @@
 # Usage:  ./setup.sh [--start] [--service] [--no-install]
 #   --start       start the server when setup finishes (no prompt)
 #   --service     install + enable a systemd *user* service instead
-#   --no-install  never install anything; fail if Node ≥ 22.13 is missing
+#   --no-install  never install anything; fail if Node ≥ 22.18 is missing
 # On NixOS you don't need this script: use `nix run` (see README).
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 MIN_MAJOR=22
-MIN_MINOR=13
+MIN_MINOR=18
 NODE=""
 
 c()    { printf '\033[%sm%s\033[0m\n' "$1" "$2"; }
@@ -121,7 +121,7 @@ if find_node; then
 else
   [ "$NO_INSTALL" = 1 ] && die "Node ≥ ${MIN_MAJOR}.${MIN_MINOR} not found (--no-install given)"
   command -v node >/dev/null 2>&1 &&
-    warn "found Node $(node --version), but ≥ v${MIN_MAJOR}.${MIN_MINOR} is required (node:sqlite)"
+    warn "found Node $(node --version), but ≥ v${MIN_MAJOR}.${MIN_MINOR} is required (node:sqlite + native TypeScript)"
   try_package_manager || install_tarball
   find_node || install_tarball
   find_node || die "still no usable Node — install Node ≥ ${MIN_MAJOR}.${MIN_MINOR} manually and re-run"
@@ -173,7 +173,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=$PWD
-ExecStart=$NODE $PWD/server.js
+ExecStart=$NODE $PWD/server.ts
 Restart=on-failure
 
 [Install]
@@ -187,15 +187,15 @@ EOF
 fi
 
 say "Setup complete."
-echo "  start the server with:  $NODE server.js"
+echo "  start the server with:  $NODE server.ts"
 echo "  then open:              http://localhost:3000"
 if [ "$DO_START" = 1 ]; then
-  exec "$NODE" server.js
+  exec "$NODE" server.ts
 elif [ -t 0 ]; then
   printf '  Start it now? [Y/n] '
   read -r yn
   case "$yn" in
     [nN]*) ;;
-    *) exec "$NODE" server.js ;;
+    *) exec "$NODE" server.ts ;;
   esac
 fi
