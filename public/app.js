@@ -480,8 +480,15 @@ $('#open-pack-btn').addEventListener('click', async () => {
   btn.disabled = true;
   try {
     const r = await api('/api/packs/open', { method: 'POST' });
-    handleUnlocks(r);
-    runPackOpening(r.cards);
+    // Don't announce achievements yet — "Heart of the Swarm unlocked!" before
+    // the flip spoils what's in the pack. Show the wallet minus the pending
+    // achievement rewards, and pay out + toast once every card is revealed.
+    const pendingRewards = (r.unlocked || []).reduce((s, a) => s + a.reward, 0);
+    if (state.me) {
+      state.me.neuros = r.neuros - pendingRewards;
+      $('#neuro-count').textContent = state.me.neuros;
+    }
+    runPackOpening(r.cards, () => handleUnlocks(r));
   } catch (err) { toast(err.message, true); }
   btn.disabled = false;
 });
@@ -498,7 +505,7 @@ $('#open-pack-btn').addEventListener('click', async () => {
 // in the pack — whatever actually rolled server-side — lands last. No
 // instructional text; the grip cursor, drag feedback, and pulsing
 // highlight on the live card are the only affordances.
-function runPackOpening(pulls) {
+function runPackOpening(pulls, onAllRevealed) {
   const byId = cardById();
   const overlay = $('#pack-overlay');
   const stage = $('#pack-stage');
@@ -673,6 +680,8 @@ function runPackOpening(pulls) {
     };
     const finishReveal = () => {
       $('#pack-done').classList.remove('hidden');
+      // now that everything is face-up, achievements can't spoil anything
+      if (onAllRevealed) setTimeout(onAllRevealed, 750);
       // Give the last card a beat to land, then keep every card at the same
       // small size — just drop the now-empty pile and re-center the row.
       setTimeout(() => {
