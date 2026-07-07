@@ -12,6 +12,13 @@
   "engines": {
     "node": ">=22.18"
   },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "onFail": "download",
+      "version": "11.10.0"
+    }
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^26.1.0",

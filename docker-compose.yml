@@ -1,0 +1,17 @@
+services:
+  app:
+    container_name: swarm-stash-server
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    working_dir: /app
+    command: [ "nix", "develop", "-c", "node", "server.js" ]
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  swarm-stash-data:
