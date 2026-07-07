@@ -1,5 +1,6 @@
-// Public site plumbing: client config, the card catalog, the type-stripped
-// SPA script, uploaded meme images, and generated identicon avatars.
+// Public site plumbing: client config, the card catalog, uploaded meme
+// images, and generated identicon avatars. (The SPA's TypeScript modules are
+// served type-stripped by the static handler in lib/static.ts.)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +9,6 @@ import { RARITIES, SERIES, PACK_COST, PACK_SIZE, DAILY_NEUROS, FOIL_CHANCE, FOIL
 import * as battle from '../battle.ts';
 import { DISCORD_ENABLED, DEV_LOGIN, MODERATION, UPLOAD_DIR, IMAGE_TYPES } from '../lib/config.ts';
 import { sendJSON } from '../lib/http.ts';
-import { appJs } from '../lib/static.ts';
 import { allCards } from '../lib/cardpool.ts';
 import type { Router } from '../lib/router.ts';
 
@@ -37,12 +37,6 @@ export function siteRoutes(r: Router): void {
   r.get('/api/catalog', ({ res }) => {
     const cards = allCards().map((c) => ({ ...c, combat: battle.statsFor(c) }));
     sendJSON(res, 200, { cards, rarities: RARITIES, series: SERIES });
-  });
-
-  // the SPA script — public/app.ts with types stripped at serve time
-  r.get('/app.js', ({ res }) => {
-    res.writeHead(200, { 'Content-Type': 'text/javascript' });
-    res.end(appJs());
   });
 
   // uploaded meme images

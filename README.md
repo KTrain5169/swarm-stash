@@ -38,8 +38,10 @@ npm run check           # typecheck server (strict) and frontend
 ```
 
 There is no build step anywhere: the server runs its own `.ts` files natively, and it
-serves `public/app.ts` to browsers with the types stripped at request time (Node's
-built-in `stripTypeScriptTypes`). Edit `public/app.ts` and reload — that's it.
+serves the SPA's TypeScript modules (`public/js/*.ts`) to browsers with the types
+stripped at request time (Node's built-in `stripTypeScriptTypes`). Edit a frontend
+file and reload — that's it. Import specifiers keep their `.ts` extensions on both
+sides.
 
 ### Project layout
 
@@ -69,7 +71,14 @@ achievements.ts  achievement definitions
 battle.ts        combat math (stats, moves, damage)
 db.ts            SQLite storage layer (schema, prepared statements, transactions)
 env.ts           .env loader (imported first by server.ts)
-public/          the SPA: index.html, style.css, app.ts
+public/          the SPA: index.html, style.css, and js/ (ES modules, served type-stripped)
+  js/main.ts       entry point — boot sequence; importing a view module registers it
+  js/nav.ts        view switching; views self-register via registerView()
+  js/state.ts      the shared mutable state object; js/api.ts — fetch wrapper
+  js/dom.ts        $ / toast / prompt-modal helpers; js/cards.ts — card art + zoom
+  js/auth.ts       session + login buttons; js/theme.ts — Neuro/Evil toggle
+  js/<view>.ts     one file per view: binder, packs, swarm, trades, arena,
+                   market, auction, ranks, memes, home
 ```
 
 New server modules must use `.ts` import extensions (Node runs them natively) and be

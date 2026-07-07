@@ -1,7 +1,8 @@
-// Static file serving for the SPA, including the one special case: the
-// frontend source is TypeScript (public/app.ts); browsers can't run it, so
-// /app.js serves it with the types stripped — the same machinery Node uses to
-// run server.ts, no build step and no committed artifact.
+// Static file serving for the SPA, including the one special rule: the
+// frontend source is TypeScript (public/js/*.ts); browsers can't run that, so
+// any .ts file under public/ is served with the types stripped — the same
+// machinery Node uses to run server.ts, no build step and no committed
+// artifact. Import specifiers keep their .ts extensions and just work.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,20 +15,30 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 
 const MIME: Record<string, string> = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
 
-// Cached until the file changes (mtime), so it strips once per edit, not per request.
-let appJsCache: { mtimeMs: number; code: string } | null = null;
-export function appJs(): string {
-  const src = path.join(PUBLIC_DIR, 'app.ts');
-  const { mtimeMs } = fs.statSync(src);
-  if (!appJsCache || appJsCache.mtimeMs !== mtimeMs) {
-    appJsCache = { mtimeMs, code: stripTypeScriptTypes(fs.readFileSync(src, 'utf8')) };
-  }
-  return appJsCache.code;
+// Stripped modules are cached until the source changes (mtime), so each file
+// strips once per edit, not once per request.
+const stripCache = new Map<string, { mtimeMs: number; code: string }>();
+function strippedTs(file: string): string | null {
+  try {
+    const { mtimeMs } = fs.statSync(file);
+    const hit = stripCache.get(file);
+    if (hit && hit.mtimeMs === mtimeMs) return hit.code;
+    const code = stripTypeScriptTypes(fs.readFileSync(file, 'utf8'));
+    stripCache.set(file, { mtimeMs, code });
+    return code;
+  } catch { return null; }
 }
 
 export function serveStatic(res: ServerResponse, urlPath: string): void {
   const file = path.normalize(path.join(PUBLIC_DIR, urlPath === '/' ? 'index.html' : urlPath));
   if (!file.startsWith(PUBLIC_DIR)) return err(res, 403, 'forbidden');
+  if (file.endsWith('.ts')) {
+    const code = strippedTs(file);
+    if (code === null) { res.writeHead(404); res.end('not found'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    res.end(code);
+    return;
+  }
   fs.readFile(file, (e, buf) => {
     if (e) {
       // SPA fallback
