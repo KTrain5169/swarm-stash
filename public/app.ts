@@ -60,6 +60,44 @@ function toast(msg: string, isError = false): void {
   setTimeout(() => el.remove(), 3900);
 }
 
+// In-page replacement for window.prompt() — some embeds (Electron webviews,
+// in-app browsers, etc) don't support the native prompt() dialog at all and
+// throw "prompt() is not supported" instead of just no-oping. This renders
+// the same request as a small modal and resolves with the entered value, or
+// null on cancel — same contract as window.prompt so call sites barely change.
+function askPrompt({ title = 'Enter a value', message = '', value = '', min, max }:
+                   { title?: string; message?: string; value?: string | number; min?: number; max?: number } = {}): Promise<string | null> {
+  const overlay = $('#prompt-overlay');
+  const input = $('#prompt-input');
+  $('#prompt-title').textContent = title;
+  $('#prompt-message').textContent = message;
+  input.value = value;
+  if (min != null) input.min = min; else input.removeAttribute('min');
+  if (max != null) input.max = max; else input.removeAttribute('max');
+  overlay.classList.remove('hidden');
+  requestAnimationFrame(() => { input.focus(); input.select(); });
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      overlay.classList.add('hidden');
+      $('#prompt-ok').removeEventListener('click', onOk);
+      $('#prompt-cancel').removeEventListener('click', onCancel);
+      $('#prompt-cancel-x').removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+    };
+    const onOk = () => { cleanup(); resolve(input.value); };
+    const onCancel = () => { cleanup(); resolve(null); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+      if (e.key === 'Escape') onCancel();
+    };
+    $('#prompt-ok').addEventListener('click', onOk);
+    $('#prompt-cancel').addEventListener('click', onCancel);
+    $('#prompt-cancel-x').addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+  });
+}
+
 // ─── Procedural card art ─────────────────────────────────────────────────────
 const RARITY_COLOR = { common: '#9aa3b5', uncommon: '#6fe3a5', rare: '#6fb7ff', epic: '#c98aff', legendary: '#ffd166' };
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -195,7 +233,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeZoom(
 function nav(view) {
   state.view = view;
   if (view !== 'battle') clearInterval(battlePoll);
-  if (['binder', 'packs', 'swarm', 'arena', 'market', 'ranks', 'trades', 'submit', 'modqueue'].includes(view)) history.replaceState(null, '', '#' + view);
+  if (view !== 'auction') clearInterval(auctionTickTimer);
+  if (['binder', 'packs', 'swarm', 'arena', 'market', 'auction', 'ranks', 'trades', 'submit', 'modqueue'].includes(view)) history.replaceState(null, '', '#' + view);
   $$('.view').forEach((v) => v.classList.add('hidden'));
   $(`#view-${view}`)?.classList.remove('hidden');
   $$('#main-nav button, #guest-nav button').forEach((b) => b.classList.toggle('active', b.dataset.nav === view));
@@ -203,6 +242,7 @@ function nav(view) {
   if (view === 'swarm') renderSwarm();
   if (view === 'arena') renderArena();
   if (view === 'market') renderMarket();
+  if (view === 'auction') renderAuctions();
   if (view === 'ranks') renderRanks();
   if (view === 'trades') renderTrades();
   if (view === 'submit') { renderMySubmissions(); renderVote(); }
@@ -455,7 +495,7 @@ async function renderBinder() {
     list.textContent = 'sell 💰';
     list.title = 'List one copy on the market';
     list.onclick = async () => {
-      const input = prompt(`List "${card.name}"${foil ? ' (foil)' : ''} on the market for how many neuros?`, String(value * 2));
+      const input = await askPrompt({ title: `List "${card.name}"${foil ? ' (foil)' : ''}`, message: 'Price in neuros', value: value * 2, min: 1 });
       if (input === null) return;
       const price = Math.floor(Number(input));
       if (!price || price < 1) return toast('enter a valid price', true);
@@ -1158,7 +1198,13 @@ $('#challenge-btn').addEventListener('click', () =>
   openBattleModal({ type: 'challenge', toId: state.member.user.id, name: state.member.user.name }));
 
 // ─── Market ──────────────────────────────────────────────────────────────────
-async function renderMarket() {
+let auctionTickTimer: ReturnType<typeof setInterval> | undefined;
+
+function renderMarket() {
+  return renderBuyNow();
+}
+
+async function renderBuyNow() {
   const { listings } = await api('/api/market');
   const byId = cardById();
   const grid = $('#market-grid');
@@ -1185,8 +1231,8 @@ async function renderMarket() {
           toast(`💰 bought ${card.name}!`);
           handleUnlocks(r);
         }
-        renderMarket();
-      } catch (err) { toast(err.message, true); renderMarket(); }
+        renderBuyNow();
+      } catch (err) { toast(err.message, true); renderBuyNow(); }
     };
     actions.appendChild(btn);
     cell.appendChild(actions);
@@ -1194,6 +1240,136 @@ async function renderMarket() {
   }));
   $('#market-empty').classList.toggle('hidden', listings.length > 0);
 }
+
+// ─── Auction house ───────────────────────────────────────────────────────────
+interface AuctionT {
+  id: string; sellerId: string; sellerName: string; sellerAvatar: string;
+  startingBid: number; currentBid: number | null; bidCount: number;
+  currentBidderId: string | null; currentBidderName: string | null;
+  endsAt: number; createdAt: number; card: InstT;
+}
+
+// Renders time-left as "3d 4h", "2h 15m", "48s" etc, down to the second so
+// the last stretch of a hot auction actually feels like it's ticking down.
+function fmtCountdown(ms: number): string {
+  if (ms <= 0) return 'ending…';
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (d > 0) return `${d}d ${h}h left`;
+  if (h > 0) return `${h}h ${m}m left`;
+  if (m > 0) return `${m}m ${sec}s left`;
+  return `${sec}s left`;
+}
+
+async function renderAuctions() {
+  clearInterval(auctionTickTimer);
+  const { auctions } = await api('/api/market/auctions') as { auctions: AuctionT[] };
+  const byId = cardById();
+  const grid = $('#auction-grid');
+  grid.replaceChildren(...auctions.map((a, i) => {
+    const card = byId[a.card.cardId];
+    const mine = a.sellerId === state.me.id;
+    const winning = a.currentBidderId === state.me.id;
+    const cell = document.createElement('div');
+    cell.className = 'card-cell' + (mine ? ' auction-mine' : '') + (winning ? ' auction-winning' : '');
+    cell.style.setProperty('--i', String(i));
+    cell.appendChild(cardEl(card, { foil: a.card.foil }));
+
+    const info = document.createElement('div');
+    info.className = 'auction-info';
+    info.innerHTML = `
+      <span class="market-seller" title="seller">${esc(a.sellerName)}</span>
+      <span class="auction-bid">⚡${a.currentBid ?? a.startingBid}${a.currentBid == null ? ' (starting)' : ''}</span>
+      <span>${a.bidCount} bid${a.bidCount === 1 ? '' : 's'}${winning && !mine ? ' · you\'re winning!' : ''}</span>
+      <span class="auction-countdown" data-ends="${a.endsAt}"></span>`;
+    cell.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    const btn = document.createElement('button');
+    if (mine) {
+      btn.textContent = a.bidCount > 0 ? 'has bids' : 'cancel ✕';
+      btn.disabled = a.bidCount > 0;
+      btn.onclick = async () => {
+        try { await api(`/api/market/auctions/${a.id}/cancel`, { method: 'POST' }); toast('auction cancelled'); renderAuctions(); }
+        catch (err) { toast(err.message, true); }
+      };
+    } else {
+      const floor = (a.currentBid ?? a.startingBid - 1) + 1;
+      btn.textContent = `bid ≥⚡${floor}`;
+      btn.onclick = async () => {
+        const input = await askPrompt({ title: `Bid on "${card.name}"${a.card.foil ? ' (foil)' : ''}`, message: `Minimum ⚡${floor}`, value: floor, min: floor });
+        if (input === null) return;
+        const amount = Math.floor(Number(input));
+        if (!amount || amount < floor) return toast(`bid must be at least ⚡${floor}`, true);
+        try {
+          const r = await api(`/api/market/auctions/${a.id}/bid`, { method: 'POST', body: { amount } });
+          toast(`🔨 bid ⚡${amount} on ${card.name}`);
+          if (state.me) { state.me.neuros = r.neuros; $('#neuro-count').textContent = r.neuros; }
+          renderAuctions();
+        } catch (err) { toast(err.message, true); }
+      };
+    }
+    actions.appendChild(btn);
+    cell.appendChild(actions);
+    return cell;
+  }));
+  $('#auction-empty').classList.toggle('hidden', auctions.length > 0);
+
+  const tick = () => {
+    let anyDue = false;
+    Array.from(grid.querySelectorAll('.auction-countdown')).forEach((el: any) => {
+      const msLeft = Number(el.dataset.ends) - Date.now();
+      el.textContent = fmtCountdown(msLeft);
+      el.classList.toggle('ending-soon', msLeft > 0 && msLeft < 5 * 60e3);
+      if (msLeft <= 0) anyDue = true;
+    });
+    if (anyDue) { clearInterval(auctionTickTimer); renderAuctions(); } // an auction just settled — refresh from the server
+  };
+  tick();
+  auctionTickTimer = setInterval(tick, 1000);
+}
+
+// ─── Start-auction picker (single-card select) ──────────────────────────────
+const auctionPick = new Set<string>(); // capped at 1 — reuses the multi-select Set pattern
+
+$('#start-auction-btn').addEventListener('click', async () => {
+  await loadCollection();
+  auctionPick.clear();
+  $('#apick-count').textContent = '0/1';
+  const byId = cardById();
+  $('#apick-grid').replaceChildren(...state.collection.map((inst) => {
+    const card = byId[inst.cardId];
+    const el = cardEl(card, { foil: inst.foil, onClick: () => {
+      const wasSelected = auctionPick.has(inst.instanceId);
+      auctionPick.clear();
+      $$('#apick-grid .tcg-card').forEach((c) => c.classList.remove('selected'));
+      if (!wasSelected) { auctionPick.add(inst.instanceId); el.classList.add('selected'); }
+      $('#apick-count').textContent = `${auctionPick.size}/1`;
+    }});
+    return el;
+  }));
+  $('#auction-start-bid').value = 100;
+  $('#auction-duration').value = 24;
+  $('#auction-modal').classList.remove('hidden');
+});
+$('#auction-modal-close').addEventListener('click', () => $('#auction-modal').classList.add('hidden'));
+
+$('#auction-start-send').addEventListener('click', async () => {
+  if (auctionPick.size !== 1) return toast('pick a card to auction', true);
+  const startingBid = Math.floor(Number($('#auction-start-bid').value));
+  const durationHours = Math.floor(Number($('#auction-duration').value));
+  if (!startingBid || startingBid < 1) return toast('enter a valid starting bid', true);
+  if (!durationHours || durationHours < 1 || durationHours > 168) return toast('duration must be 1–168 hours', true);
+  try {
+    const [instanceId] = auctionPick;
+    await api('/api/market/auctions', { method: 'POST', body: { instanceId, startingBid, durationHours } });
+    $('#auction-modal').classList.add('hidden');
+    toast(`⏱ auction started — starting bid ⚡${startingBid}`);
+    renderAuctions();
+  } catch (err) { toast(err.message, true); }
+});
 
 // ─── Meme of the week vote ───────────────────────────────────────────────────
 async function renderVote() {
@@ -1460,7 +1636,7 @@ function renderChatTicker() {
     loadTrades();
     setInterval(loadTrades, 30000); // keep trade state fresh in the background
     const deep = location.hash.slice(1);
-    nav(['binder', 'packs', 'swarm', 'arena', 'market', 'ranks', 'trades', 'submit', 'modqueue'].includes(deep) ? deep : 'binder');
+    nav(['binder', 'packs', 'swarm', 'arena', 'market', 'auction', 'ranks', 'trades', 'submit', 'modqueue'].includes(deep) ? deep : 'binder');
   } else {
     nav('home');
   }

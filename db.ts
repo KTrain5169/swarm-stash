@@ -86,6 +86,26 @@ export interface ListingRow {
   sellerAvatar?: string;
 }
 
+export type AuctionStatus = 'active' | 'sold' | 'expired' | 'cancelled';
+export interface AuctionRow {
+  id: string;
+  instanceId: string;
+  sellerId: string;
+  startingBid: number;
+  currentBid: number | null;
+  currentBidderId: string | null;
+  durationHours: number;
+  endsAt: number;
+  status: AuctionStatus;
+  createdAt: number;
+  resolvedAt: number | null;
+  sellerName?: string;      // present on joined queries
+  sellerAvatar?: string;
+  bidderName?: string | null;
+  bidderAvatar?: string | null;
+  bidCount?: number;        // attached by activeAuctions()
+}
+
 export interface AchievementRow { achId: string; unlockedAt: number }
 export interface WeeklyWinnerRow { week: string; memeId: string; submitterId: string; decidedAt: number }
 export interface VoteTally { memeId: string; n: number }
@@ -182,6 +202,35 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
 
+  -- Auction-house listings: sellers set a starting bid + duration (hours, max
+  -- 168 = 1 week); bidders' neuros are escrowed (deducted) the moment they
+  -- bid and refunded the moment they're outbid, so the current highest bid
+  -- is always already "paid in" and settlement at expiry is just a transfer.
+  CREATE TABLE IF NOT EXISTS auctions (
+    id              TEXT PRIMARY KEY,
+    instanceId      TEXT NOT NULL,
+    sellerId        TEXT NOT NULL REFERENCES users(id),
+    startingBid     INTEGER NOT NULL,
+    currentBid      INTEGER,
+    currentBidderId TEXT,
+    durationHours   INTEGER NOT NULL,
+    endsAt          INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',  -- active | sold | expired | cancelled
+    createdAt       INTEGER NOT NULL,
+    resolvedAt      INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_auctions_status ON auctions(status);
+  CREATE INDEX IF NOT EXISTS idx_auctions_ends ON auctions(endsAt);
+
+  CREATE TABLE IF NOT EXISTS auction_bids (
+    id        TEXT PRIMARY KEY,
+    auctionId TEXT NOT NULL REFERENCES auctions(id),
+    bidderId  TEXT NOT NULL REFERENCES users(id),
+    amount    INTEGER NOT NULL,
+    createdAt INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_bids_auction ON auction_bids(auctionId);
+
   CREATE TABLE IF NOT EXISTS votes (
     week    TEXT NOT NULL,
     voterId TEXT NOT NULL REFERENCES users(id),
@@ -259,6 +308,21 @@ const q = {
   activeListingIds: db.prepare(`SELECT instanceId FROM listings WHERE status = 'active'`),
   resolveListing: db.prepare(`UPDATE listings SET status = ?, buyerId = ?, resolvedAt = ? WHERE id = ?`),
 
+  insertAuction: db.prepare(`INSERT INTO auctions (id, instanceId, sellerId, startingBid, durationHours, endsAt, status, createdAt)
+                             VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`),
+  getAuction: db.prepare(`SELECT * FROM auctions WHERE id = ?`),
+  activeAuctions: db.prepare(`SELECT a.*, u.name AS sellerName, u.avatar AS sellerAvatar,
+                              bu.name AS bidderName, bu.avatar AS bidderAvatar
+                              FROM auctions a JOIN users u ON u.id = a.sellerId
+                              LEFT JOIN users bu ON bu.id = a.currentBidderId
+                              WHERE a.status = 'active' ORDER BY a.endsAt ASC`),
+  activeAuctionIds: db.prepare(`SELECT instanceId FROM auctions WHERE status = 'active'`),
+  dueAuctions: db.prepare(`SELECT * FROM auctions WHERE status = 'active' AND endsAt <= ?`),
+  placeAuctionBid: db.prepare(`UPDATE auctions SET currentBid = ?, currentBidderId = ? WHERE id = ?`),
+  resolveAuctionRow: db.prepare(`UPDATE auctions SET status = ?, resolvedAt = ? WHERE id = ?`),
+  insertBid: db.prepare(`INSERT INTO auction_bids (id, auctionId, bidderId, amount, createdAt) VALUES (?, ?, ?, ?, ?)`),
+  bidCount: db.prepare(`SELECT COUNT(*) AS n FROM auction_bids WHERE auctionId = ?`),
+
   setShowcase: db.prepare(`UPDATE users SET showcase = ? WHERE id = ?`),
 
   upsertVote: db.prepare(`INSERT INTO votes (week, voterId, memeId, votedAt) VALUES (?, ?, ?, ?)
@@ -323,13 +387,14 @@ const store = {
   listTradesFor: (userId: string) => (q.listTradesFor.all(userId, userId) as unknown as TradeRow[]).map((r) => rowToTrade(r)!),
   resolveTrade: (id: string, status: TradeStatus) => q.resolveTrade.run(status, Date.now(), id),
 
-  // instances that must not change hands: sides of pending trades + active market listings
+  // instances that must not change hands: sides of pending trades + active market listings/auctions
   lockedInstanceIds(): Set<string> {
     const locked = new Set<string>();
     for (const r of q.pendingTrades.all() as unknown as { offer: string; request: string }[]) {
       for (const id of [...JSON.parse(r.offer), ...JSON.parse(r.request)] as string[]) locked.add(id);
     }
     for (const r of q.activeListingIds.all() as unknown as { instanceId: string }[]) locked.add(r.instanceId);
+    for (const r of q.activeAuctionIds.all() as unknown as { instanceId: string }[]) locked.add(r.instanceId);
     return locked;
   },
 
@@ -370,6 +435,83 @@ const store = {
   activeListings: () => q.activeListings.all() as unknown as ListingRow[],
   resolveListing: (id: string, status: ListingStatus, buyerId: string | null = null) =>
     q.resolveListing.run(status, buyerId, Date.now(), id),
+
+  createAuction({ instanceId, sellerId, startingBid, durationHours }:
+                { instanceId: string; sellerId: string; startingBid: number; durationHours: number }): AuctionRow {
+    const id = newId('a');
+    const now = Date.now();
+    const endsAt = now + durationHours * 3600e3;
+    q.insertAuction.run(id, instanceId, sellerId, startingBid, durationHours, endsAt, now);
+    return q.getAuction.get(id) as unknown as AuctionRow;
+  },
+  getAuction: (id: string) => q.getAuction.get(id) as unknown as AuctionRow | undefined,
+  activeAuctions: (): AuctionRow[] => (q.activeAuctions.all() as unknown as AuctionRow[])
+    .map((a) => ({ ...a, bidCount: (q.bidCount.get(a.id) as unknown as { n: number }).n })),
+  bidsFor: (auctionId: string) => (q.bidCount.get(auctionId) as unknown as { n: number }).n,
+
+  // Escrow model: the bidder's neuros are deducted the instant the bid lands,
+  // and the previous highest bidder (if any) is refunded in the same
+  // transaction — so `currentBid` on the row is always neuros that are
+  // already sitting in escrow, and settling the auction later is just a
+  // straight transfer, never a fresh charge that could fail.
+  placeBid(auctionId: string, bidderId: string, amount: number): AuctionRow {
+    db.exec('BEGIN');
+    try {
+      const a = q.getAuction.get(auctionId) as unknown as AuctionRow | undefined;
+      if (!a || a.status !== 'active' || a.endsAt <= Date.now()) throw new Error('auction is no longer active');
+      if (a.sellerId === bidderId) throw new Error('you cannot bid on your own auction');
+      const floor = a.currentBid != null ? a.currentBid + 1 : a.startingBid;
+      if (amount < floor) throw new Error(`bid must be at least ⚡${floor}`);
+      const bidder = q.getUser.get(bidderId) as unknown as UserRow | undefined;
+      if (!bidder || bidder.neuros < amount) throw new Error('not enough neuros for that bid');
+
+      q.setNeuros.run(bidder.neuros - amount, bidderId);
+      if (a.currentBidderId) {
+        const prev = q.getUser.get(a.currentBidderId) as unknown as UserRow | undefined;
+        if (prev) q.setNeuros.run(prev.neuros + a.currentBid!, prev.id);
+      }
+      q.placeAuctionBid.run(amount, bidderId, auctionId);
+      q.insertBid.run(newId('bid'), auctionId, bidderId, amount, Date.now());
+      db.exec('COMMIT');
+      return q.getAuction.get(auctionId) as unknown as AuctionRow;
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  },
+
+  // No bids yet → free to cancel (nothing in escrow to refund but the seller's own card).
+  cancelAuction(id: string): void {
+    const a = q.getAuction.get(id) as unknown as AuctionRow | undefined;
+    if (a && a.currentBidderId) throw new Error('cannot cancel an auction that already has a bid');
+    q.resolveAuctionRow.run('cancelled', Date.now(), id);
+  },
+
+  // Called periodically (and opportunistically on market reads) to settle
+  // anything whose clock has run out: sold → transfer card + pay seller;
+  // no-bid → just expire, card stays put, nothing was ever escrowed from the seller.
+  resolveExpiredAuctions(): number {
+    const due = q.dueAuctions.all(Date.now()) as unknown as AuctionRow[];
+    for (const a of due) {
+      db.exec('BEGIN');
+      try {
+        if (a.currentBidderId) {
+          const inst = q.getInstance.get(a.instanceId) as unknown as InstanceRow | undefined;
+          if (inst && inst.ownerId === a.sellerId) q.setOwner.run(a.currentBidderId, a.instanceId);
+          const seller = q.getUser.get(a.sellerId) as unknown as UserRow | undefined;
+          if (seller) q.setNeuros.run(seller.neuros + a.currentBid!, a.sellerId);
+          q.resolveAuctionRow.run('sold', Date.now(), a.id);
+        } else {
+          q.resolveAuctionRow.run('expired', Date.now(), a.id);
+        }
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        console.error('auction settle failed', a.id, e);
+      }
+    }
+    return due.length;
+  },
 
   setShowcase: (userId: string, instanceIds: string[]) => q.setShowcase.run(JSON.stringify(instanceIds), userId),
 
