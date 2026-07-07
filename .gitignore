@@ -23,3 +23,6 @@ public/app.js
 *.db
 *.db-shm
 *.db-wal
+
+# local editor configs
+.vscode/
