@@ -1,6 +1,6 @@
 /* Swarm Stash — SPA
-   This TypeScript file is served to the browser as /app.js with the types
-   stripped at request time by server.ts — no build step, just edit + reload. */
+   Source of truth is this TypeScript file; the browser loads the compiled
+   public/app.js (committed). Rebuild with `npm run build`. */
 'use strict';
 
 // ─── shared shapes (mirror the server's API responses) ───────────────────────

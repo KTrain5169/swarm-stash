@@ -4,6 +4,9 @@
 
 import './env.ts'; // must load .env before db.ts reads DATA_DIR
 
+import { FastResponse } from 'srvx';
+globalThis.Response = FastResponse;
+
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
@@ -364,8 +367,8 @@ function appJs(): string {
 }
 
 function serveStatic(res: ServerResponse, urlPath: string): void {
-  const file = path.normalize(path.join(import.meta.dirname, 'public', urlPath === '/' ? 'index.html' : urlPath));
-  if (!file.startsWith(path.join(import.meta.dirname, 'public'))) return err(res, 403, 'forbidden');
+  const file = path.normalize(path.join(import.meta.dirname, urlPath === '/' ? 'index.html' : urlPath));
+  if (!file.startsWith(path.join(import.meta.dirname))) return err(res, 403, 'forbidden');
   fs.readFile(file, (e, buf) => {
     if (e) {
       // SPA fallback
@@ -998,15 +1001,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<unknow
   return serveStatic(res, p);
 }
 
-http.createServer((req, res) => {
+export default (req: http.IncomingMessage, res: http.ServerResponse<http.IncomingMessage> & { req: http.IncomingMessage; }) => {
   handle(req, res).catch((e: unknown) => {
     console.error(`${req.method} ${req.url} →`, e);
     if (!res.headersSent) err(res, 500, 'internal error');
   });
-}).listen(PORT, () => {
-  console.log(`🐝 Swarm Stash running at ${BASE_URL}`);
-  console.log(`   Discord OAuth: ${DISCORD_ENABLED ? 'enabled' : 'NOT configured (using dev login)'} · dev login: ${DEV_LOGIN ? 'on' : 'off'}`);
-});
+}
+// .listen(PORT, () => {
+// console.log(`🐝 Swarm Stash running at ${BASE_URL}`);
+//   console.log(`   Discord OAuth: ${DISCORD_ENABLED ? 'enabled' : 'NOT configured (using dev login)'} · dev login: ${DEV_LOGIN ? 'on' : 'off'}`);
+// });
 
 // Settle auctions whose clock ran out even if nobody happens to load the
 // market page right at that moment — escrowed neuros shouldn't just sit there.

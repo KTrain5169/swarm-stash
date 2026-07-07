@@ -18,6 +18,7 @@ nohup.out
 
 # generated from public/app.ts at serve time — never commit
 public/app.js
+.output
 
 # stray SQLite files from ad-hoc test runs (real data lives in data/, already ignored)
 *.db
