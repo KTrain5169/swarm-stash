@@ -1,19 +1,23 @@
 {
-  // Frontend config: typecheck only. public/app.ts is served by server.ts
-  // with the types stripped at request time (Node's stripTypeScriptTypes),
-  // so there is no emit and no committed artifact. erasableSyntaxOnly keeps
-  // the source inside what type stripping can handle (no enums/namespaces),
-  // and the target pins the syntax level browsers must parse. Looser than
-  // the server config — the SPA predates the TS conversion and gets
-  // tightened incrementally; new frontend code should still be typed.
+  // Frontend config: typecheck only. The SPA lives in public/js/*.ts as ES
+  // modules; the server serves each file to the browser with the types
+  // stripped at request time (Node's stripTypeScriptTypes), so there is no
+  // emit and no committed artifact. erasableSyntaxOnly keeps the source
+  // inside what type stripping can handle (no enums/namespaces), imports use
+  // real .ts extensions (allowImportingTsExtensions), and the target pins
+  // the syntax level browsers must parse. Looser than the server config —
+  // the SPA predates the TS conversion and gets tightened incrementally;
+  // new frontend code should still be typed.
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
     "strict": false,
     "noImplicitAny": false,
     "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true
   },
   "include": ["src/*.ts"]

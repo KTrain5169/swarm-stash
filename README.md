@@ -38,8 +38,51 @@ npm run check           # typecheck server (strict) and frontend
 ```
 
 There is no build step anywhere: the server runs its own `.ts` files natively, and it
-serves `public/app.ts` to browsers with the types stripped at request time (Node's
-built-in `stripTypeScriptTypes`). Edit `public/app.ts` and reload — that's it.
+serves the SPA's TypeScript modules (`public/js/*.ts`) to browsers with the types
+stripped at request time (Node's built-in `stripTypeScriptTypes`). Edit a frontend
+file and reload — that's it. Import specifiers keep their `.ts` extensions on both
+sides.
+
+### Project layout
+
+```
+server.ts        entry point — wires the router, starts the http server
+routes/          one file per API area; each registers its endpoints on the router
+  auth.ts          Discord OAuth + dev login, logout
+  site.ts          client config, card catalog, /app.js, meme images, avatars
+  players.ts       /api/me, member list, leaderboard, binders, achievements, showcase
+  economy.ts       daily claim, pack opening, recycling cards
+  memes.ts         meme submission portal, moderation queue, Meme of the Week vote
+  trades.ts        card-for-card trades (bots respond instantly)
+  battles.ts       arena battles: challenges, turns, wagers, bot opponents
+  market.ts        fixed-price listings + auction house
+lib/             shared plumbing used by the routes
+  config.ts        env vars, admin list, upload limits — all config in one place
+  router.ts        tiny :param path router; userGet/userPost require a login
+  session.ts       HMAC-signed cookie sessions
+  http.ts          sendJSON / err / readBody helpers
+  static.ts        static files + type-stripped /app.js
+  cardpool.ts      live card pool (catalog + approved memes), pack rolls, card values
+  progress.ts      achievement engine (checks, payouts)
+  views.ts         shared client-facing JSON shapes
+  bots.ts          bot seeding and trade decisions
+catalog.ts       the built-in card set, rarities, economy constants
+achievements.ts  achievement definitions
+battle.ts        combat math (stats, moves, damage)
+db.ts            SQLite storage layer (schema, prepared statements, transactions)
+env.ts           .env loader (imported first by server.ts)
+public/          the SPA: index.html, style.css, and js/ (ES modules, served type-stripped)
+  js/main.ts       entry point — boot sequence; importing a view module registers it
+  js/nav.ts        view switching; views self-register via registerView()
+  js/state.ts      the shared mutable state object; js/api.ts — fetch wrapper
+  js/dom.ts        $ / toast / prompt-modal helpers; js/cards.ts — card art + zoom
+  js/auth.ts       session + login buttons; js/theme.ts — Neuro/Evil toggle
+  js/<view>.ts     one file per view: binder, packs, swarm, trades, arena,
+                   market, auction, ranks, memes, home
+```
+
+New server modules must use `.ts` import extensions (Node runs them natively) and be
+added to git before `nix run` — the flake only packages tracked files.
 
 `setup.sh` tries your package manager first (apt/dnf/pacman/zypper/apk/brew) and otherwise
 drops the official Node build into `./.node` — no root needed. `./setup.sh --service`
