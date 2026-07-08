@@ -1,13 +1,6 @@
-// Swarm Stash — entry point. Zero runtime dependencies: Node's built-in http
-// server and SQLite (node:sqlite), run directly as TypeScript via Node's
-// native type stripping.
-//
-// This file is only wiring. The actual behavior lives in:
-//   routes/   — one file per API area (auth, players, trades, battles, …)
-//   lib/      — shared plumbing (config, router, sessions, card pool, …)
-//   catalog.ts / achievements.ts / battle.ts — game content & combat rules
-//   db.ts     — SQLite storage layer
-//   public/   — the SPA (app.ts is served type-stripped as /app.js)
+// Swarm Stash — Node server with zero runtime dependencies
+// Serves the SPA, handles Discord OAuth, and runs the trading API on SQLite
+// (node:sqlite). Runs as TypeScript directly via Node's native type stripping.
 
 import './features/env.ts'; // must load .env before db.ts reads DATA_DIR
 
@@ -333,11 +326,7 @@ function serveStatic(res: ServerResponse, urlPath: string): void {
 // ─── Routes ──────────────────────────────────────────────────────────────────
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<unknown | void> {
   const url = new URL(req.url || '/', BASE_URL);
-  const match = router.match(req.method || 'GET', url.pathname);
-  if (!match) {
-    if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) return err(res, 404, 'no such endpoint');
-    return serveStatic(res, url.pathname); // everything else is the SPA
-  }
+  const p = url.pathname;
   const me = readSession(req);
 
   if (p === '/auth/logout' && req.method === 'POST') {
